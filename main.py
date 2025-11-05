@@ -1,18 +1,13 @@
-"""Main entry point for the Letterboxd scraper."""
-
-import logging
 import sys
 
 import config
 from exporters import JSONExporter
+from logger import get_logger, setup_logger
 from scrapers import CSVScraper, HTMLScraper
 
-# Configure logging
-logging.basicConfig(
-    level=getattr(logging, config.LOG_LEVEL),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
+# Set up centralized logger
+setup_logger(level=config.LOG_LEVEL, log_to_file=config.LOG_TO_FILE, use_colors=True)
+logger = get_logger(__name__)
 
 
 def create_scraper():
@@ -34,7 +29,7 @@ def create_scraper():
             delay_between_requests=config.HTML_DELAY_BETWEEN_REQUESTS,
             timeout=config.HTML_TIMEOUT,
             save_raw_data=config.SAVE_RAW_DATA,
-            output_dir=config.OUTPUT_DIR
+            output_dir=config.OUTPUT_DIR,
         )
 
     elif scraper_type == "csv":
@@ -42,13 +37,12 @@ def create_scraper():
         return CSVScraper(
             csv_file_path=config.CSV_FILE_PATH,
             save_raw_data=config.SAVE_RAW_DATA,
-            output_dir=config.OUTPUT_DIR
+            output_dir=config.OUTPUT_DIR,
         )
 
     else:
         raise ValueError(
-            f"Invalid SCRAPER_TYPE: {config.SCRAPER_TYPE}. "
-            f"Must be 'html' or 'csv'"
+            f"Invalid SCRAPER_TYPE: {config.SCRAPER_TYPE}. Must be 'html' or 'csv'"
         )
 
 
@@ -68,7 +62,9 @@ def display_results(result):
         logger.warning("No films found. The source may be empty or inaccessible.")
         return
 
-    logger.info(f"Successfully scraped {result.film_count} films using {result.source} scraper")
+    logger.info(
+        f"Successfully scraped {result.film_count} films using {result.source} scraper"
+    )
 
     # Display first 10 films with parsed data
     display_count = min(10, result.film_count)
@@ -85,7 +81,9 @@ def display_results(result):
 
     # Display statistics
     films_with_year = sum(1 for f in result.films if f.year is not None)
-    year_percentage = (films_with_year / result.film_count * 100) if result.film_count > 0 else 0
+    year_percentage = (
+        (films_with_year / result.film_count * 100) if result.film_count > 0 else 0
+    )
 
     logger.info(f"\nStatistics:")
     logger.info(f"  Source: {result.source}")
@@ -118,13 +116,14 @@ def main() -> int:
             # Export to JSON if successful
             if result.success and result.film_count > 0:
                 output_file = JSONExporter.export_to_default_location(
-                    result,
-                    config.OUTPUT_DIR
+                    result, config.OUTPUT_DIR
                 )
                 logger.info(f"\nData saved to: {output_file}")
                 return 0
             else:
-                logger.error("Scraping completed but no data was collected or errors occurred")
+                logger.error(
+                    "Scraping completed but no data was collected or errors occurred"
+                )
                 return 1
 
     except ValueError as e:

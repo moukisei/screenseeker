@@ -1,14 +1,9 @@
-"""CSV-based parser for Letterboxd export files."""
-
 import csv
-import logging
 from pathlib import Path
 from typing import Optional
 
 from models import Film, ScrapingResult
 from scrapers.base import BaseScraper
-
-logger = logging.getLogger(__name__)
 
 
 class CSVScraper(BaseScraper):
@@ -18,7 +13,7 @@ class CSVScraper(BaseScraper):
         self,
         csv_file_path: str,
         save_raw_data: bool = False,
-        output_dir: Optional[Path] = None
+        output_dir: Optional[Path] = None,
     ):
         """
         Initialize the CSV scraper.
@@ -41,10 +36,9 @@ class CSVScraper(BaseScraper):
         Parse films from the CSV export file.
 
         Expected CSV columns:
-        - Date: Date added to watchlist
-        - Name: Film title without year
-        - Year: Release year
-        - Letterboxd URI: Full Letterboxd URL
+        - Name: Film title without year (required)
+        - Year: Release year (optional)
+        - Date: Date added to watchlist (optional)
 
         Returns:
             ScrapingResult containing the parsed films and metadata
@@ -58,7 +52,7 @@ class CSVScraper(BaseScraper):
                 reader = csv.DictReader(f)
 
                 # Validate that required columns exist
-                required_columns = {"Name", "Year", "Letterboxd URI"}
+                required_columns = {"Name"}
                 if not required_columns.issubset(set(reader.fieldnames or [])):
                     missing = required_columns - set(reader.fieldnames or [])
                     error_msg = f"Missing required columns in CSV: {missing}"
@@ -68,32 +62,53 @@ class CSVScraper(BaseScraper):
                         total_pages_scraped=0,
                         success=False,
                         error_message=error_msg,
-                        source="csv"
+                        source="csv",
                     )
 
                 # Parse each row
                 row_count = 0
-                for row_num, row in enumerate(reader, start=2):  # start=2 because row 1 is header
+                for row_num, row in enumerate(
+                    reader, start=2
+                ):  # start=2 because row 1 is header
                     row_count += 1
 
                     try:
                         # Extract data from row
                         name = row.get("Name", "").strip()
-                        year = row.get("Year", "").strip()
-                        letterboxd_uri = row.get("Letterboxd URI", "").strip()
-                        date_added = row.get("Date", "").strip()  # Optional column
+                        year_str = row.get("Year", "").strip()
+                        date_added = row.get("Date", "").strip()
 
                         # Skip empty rows
-                        if not name or not letterboxd_uri:
-                            self.logger.warning(f"Row {row_num}: Missing name or URI, skipping")
+                        if not name:
+                            self.logger.warning(
+                                f"Row {row_num}: Missing name, skipping"
+                            )
                             continue
 
-                        # Create Film instance from CSV data
-                        film = Film.from_csv_data(
-                            name=name,
-                            year=year if year else None,
-                            letterboxd_uri=letterboxd_uri,
-                            date_added=date_added if date_added else None
+                        # Parse year
+                        year = None
+                        if year_str:
+                            try:
+                                year = int(year_str)
+                            except ValueError:
+                                self.logger.warning(
+                                    f"Row {row_num}: Could not parse year '{year_str}'"
+                                )
+
+                        # Build full title
+                        film_title = name
+                        film_full_title = (
+                            f"{film_title} ({year})" if year else film_title
+                        )
+
+                        # Create Film instance
+                        film = Film(
+                            film_full_title=film_full_title,
+                            film_title=film_title,
+                            year=year,
+                            date_added=date_added if date_added else None,
+                            # film_id will be auto-generated
+                            # date_added will use CSV date or default to today if not provided
                         )
                         films.append(film)
 
@@ -110,7 +125,7 @@ class CSVScraper(BaseScraper):
                     films=films,
                     total_pages_scraped=1,  # CSV is a single "page"
                     success=True,
-                    source="csv"
+                    source="csv",
                 )
 
         except FileNotFoundError as e:
@@ -121,7 +136,7 @@ class CSVScraper(BaseScraper):
                 total_pages_scraped=0,
                 success=False,
                 error_message=error_msg,
-                source="csv"
+                source="csv",
             )
 
         except csv.Error as e:
@@ -132,7 +147,7 @@ class CSVScraper(BaseScraper):
                 total_pages_scraped=0,
                 success=False,
                 error_message=error_msg,
-                source="csv"
+                source="csv",
             )
 
         except Exception as e:
@@ -143,5 +158,5 @@ class CSVScraper(BaseScraper):
                 total_pages_scraped=0,
                 success=False,
                 error_message=error_msg,
-                source="csv"
+                source="csv",
             )
