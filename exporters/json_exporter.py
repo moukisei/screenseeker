@@ -1,12 +1,10 @@
-"""JSON exporter for scraping results."""
-
 import json
-import logging
 from pathlib import Path
 
+from logger import get_logger
 from models import ScrapingResult
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class JSONExporter:

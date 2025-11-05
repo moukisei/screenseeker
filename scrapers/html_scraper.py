@@ -1,6 +1,3 @@
-"""HTML-based scraper for Letterboxd profiles."""
-
-import logging
 import time
 from datetime import datetime
 from pathlib import Path
@@ -12,8 +9,6 @@ from bs4 import BeautifulSoup
 from models import Film, ScrapingResult
 from scrapers.base import BaseScraper
 
-logger = logging.getLogger(__name__)
-
 
 class HTMLScraper(BaseScraper):
     """Scraper for extracting film data from Letterboxd profiles via HTML."""
@@ -24,7 +19,7 @@ class HTMLScraper(BaseScraper):
         delay_between_requests: float = 2.0,
         timeout: int = 10,
         save_raw_data: bool = False,
-        output_dir: Optional[Path] = None
+        output_dir: Optional[Path] = None,
     ):
         """
         Initialize the HTML scraper.
@@ -42,13 +37,17 @@ class HTMLScraper(BaseScraper):
         self.delay = delay_between_requests
         self.timeout = timeout
         self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-        })
+        self.session.headers.update(
+            {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+            }
+        )
 
         # Create output directory if saving raw HTML
         if self.save_raw_data:
-            self.html_dir = self.output_dir / "raw_html" / datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.html_dir = (
+                self.output_dir / "raw_html" / datetime.now().strftime("%Y%m%d_%H%M%S")
+            )
             self.html_dir.mkdir(parents=True, exist_ok=True)
             self.logger.info(f"Raw HTML will be saved to {self.html_dir}")
 
@@ -72,7 +71,9 @@ class HTMLScraper(BaseScraper):
                 response = self.session.get(url, timeout=self.timeout)
 
                 if response.status_code != 200:
-                    self.logger.warning(f"Received status code {response.status_code} for page {page}")
+                    self.logger.warning(
+                        f"Received status code {response.status_code} for page {page}"
+                    )
                     break
 
                 # Save raw HTML if requested
@@ -85,7 +86,9 @@ class HTMLScraper(BaseScraper):
 
                 # If no films found on the page, stop
                 if not grid_items:
-                    self.logger.info(f"No films found on page {page}. Stopping pagination.")
+                    self.logger.info(
+                        f"No films found on page {page}. Stopping pagination."
+                    )
                     break
 
                 # Extract films from grid items
@@ -97,10 +100,7 @@ class HTMLScraper(BaseScraper):
                 time.sleep(self.delay)  # Rate limiting
 
             return ScrapingResult(
-                films=films,
-                total_pages_scraped=page - 1,
-                success=True,
-                source="html"
+                films=films, total_pages_scraped=page - 1, success=True, source="html"
             )
 
         except requests.RequestException as e:
@@ -110,7 +110,7 @@ class HTMLScraper(BaseScraper):
                 total_pages_scraped=page - 1,
                 success=False,
                 error_message=f"Request error: {str(e)}",
-                source="html"
+                source="html",
             )
 
         except Exception as e:
@@ -120,7 +120,7 @@ class HTMLScraper(BaseScraper):
                 total_pages_scraped=page - 1,
                 success=False,
                 error_message=f"Unexpected error: {str(e)}",
-                source="html"
+                source="html",
             )
 
     def _save_html_response(self, html_content: str, page_number: int) -> None:
@@ -155,18 +155,27 @@ class HTMLScraper(BaseScraper):
                 continue
 
             title = react_component.get("data-item-full-display-name")
-            film_id = react_component.get("data-film-id")
 
             # Skip if missing data
-            if not title or not film_id:
-                self.logger.warning(f"Skipping item with missing data: title={title}, id={film_id}")
+            if not title:
+                self.logger.warning("Skipping item with missing title")
                 continue
 
             try:
-                film = Film.from_html_data(title=title, film_id=film_id)
+                # Parse title into components
+                film_full_title, film_title, year = Film.parse_title_and_year(title)
+
+                # Create Film object (film_id and date_added will be auto-generated)
+                film = Film(
+                    film_full_title=film_full_title,
+                    film_title=film_title,
+                    year=year,
+                    # film_id will be auto-generated from title+year
+                    # date_added will default to today's date
+                )
                 films.append(film)
             except ValueError as e:
-                self.logger.warning(f"Invalid film data: {e}")
+                self.logger.warning(f"Invalid film data for '{title}': {e}")
                 continue
 
         return films

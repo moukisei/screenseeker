@@ -1,141 +1,102 @@
-"""Data models for Letterboxd scraper using Pydantic."""
-
-import json
-import logging
+import hashlib
 import re
-from datetime import datetime
-from pathlib import Path
+from datetime import date, datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-logger = logging.getLogger(__name__)
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class Film(BaseModel):
     """Represents a film entry from Letterboxd."""
 
-    film_id: str = Field(..., description="Unique film identifier (slug from URI)")
-    film_full_title: str = Field(..., description="Full display name of the film with year")
+    film_id: str = Field(default="", description="Unique auto-generated identifier")
+    film_full_title: str = Field(
+        ..., description="Full display name of the film with year"
+    )
     film_title: str = Field(..., description="Film title without year")
     year: Optional[int] = Field(None, description="Release year of the film")
-    letterboxd_uri: Optional[str] = Field(None, description="Letterboxd URI")
-    date_added: Optional[str] = Field(None, description="Date added to watchlist (CSV only)")
+    date_added: str = Field(..., description="Date added to watchlist")
 
-    @classmethod
-    def from_html_data(cls, title: str, film_id: str) -> "Film":
+    @staticmethod
+    def parse_title_and_year(title: str) -> tuple[str, str, Optional[int]]:
         """
-        Create a Film instance from HTML scraper data.
+        Parse a full title into components.
 
         Args:
-            title: Full display name (e.g., "The Matrix (1999)")
-            film_id: Letterboxd film identifier from HTML
+            title: Full title (e.g., "The Matrix (1999)" or "The Matrix")
 
         Returns:
-            Film instance with parsed title and year
+            Tuple of (film_full_title, film_title, year)
         """
-        # Parse title and year using regex pattern: "Title (YYYY)"
+        # Try to parse "Title (YYYY)" format
         match = re.match(r"^(.+?)\s*\((\d{4})\)$", title.strip())
 
         if match:
             film_title = match.group(1).strip()
             year = int(match.group(2))
-            film_full_title = title.strip()
+            film_full_title = f"{film_title} ({year})"
+            return film_full_title, film_title, year
         else:
-            # If pattern doesn't match, use full title as film_title
+            # No year in title
             film_title = title.strip()
-            film_full_title = title.strip()
-            year = None
-            logger.warning(f"Could not parse year from title: {title}")
-
-        return cls(
-            film_id=film_id.strip(),
-            film_full_title=film_full_title,
-            film_title=film_title,
-            year=year,
-            letterboxd_uri=None,
-            date_added=None
-        )
-
-    @classmethod
-    def from_csv_data(
-        cls,
-        name: str,
-        year: Optional[str],
-        letterboxd_uri: str,
-        date_added: Optional[str] = None
-    ) -> "Film":
-        """
-        Create a Film instance from CSV data.
-
-        Args:
-            name: Film title without year
-            year: Release year as string
-            letterboxd_uri: Letterboxd URI (e.g., "https://letterboxd.com/film/the-matrix/")
-            date_added: Date added to watchlist
-
-        Returns:
-            Film instance with data from CSV
-        """
-        # Extract film_id (slug) from URI
-        # URI format: https://letterboxd.com/film/the-matrix/
-        film_id = cls._extract_slug_from_uri(letterboxd_uri)
-
-        # Parse year
-        year_int = None
-        if year:
-            try:
-                year_int = int(year.strip())
-            except ValueError:
-                logger.warning(f"Could not parse year: {year}")
-
-        # Build full title
-        film_title = name.strip()
-        film_full_title = f"{film_title} ({year_int})" if year_int else film_title
-
-        return cls(
-            film_id=film_id,
-            film_full_title=film_full_title,
-            film_title=film_title,
-            year=year_int,
-            letterboxd_uri=letterboxd_uri.strip(),
-            date_added=date_added.strip() if date_added else None
-        )
+            return film_title, film_title, None
 
     @staticmethod
-    def _extract_slug_from_uri(uri: str) -> str:
+    def generate_film_id(title: str, year: Optional[int]) -> str:
         """
-        Extract the film slug from a Letterboxd URI.
+        Generate a deterministic unique ID for a film based on title and year.
 
         Args:
-            uri: Letterboxd URI (e.g., "https://letterboxd.com/film/the-matrix/")
+            title: Film title (without year)
+            year: Release year
 
         Returns:
-            Film slug (e.g., "the-matrix")
+            Unique film ID (hash-based)
         """
-        # Remove trailing slash and split
-        uri = uri.rstrip("/")
-        parts = uri.split("/")
+        # Create a string to hash: lowercase title + year
+        key = f"{title.lower().strip()}_{year or 'unknown'}"
+        # Generate SHA256 hash and take first 16 characters
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
 
-        # The slug is the last part after /film/
-        if len(parts) >= 2 and parts[-2] == "film":
-            return parts[-1]
-        elif "film/" in uri:
-            # Try to extract after "film/"
-            match = re.search(r"/film/([^/]+)", uri)
-            if match:
-                return match.group(1)
+    @model_validator(mode="before")
+    @classmethod
+    def generate_id_if_missing(cls, values):
+        """Automatically generate film_id if not provided or empty."""
+        if isinstance(values, dict):
+            # Get film_id, film_title, and year from values
+            film_id = values.get("film_id", "")
+            film_title = values.get("film_title", "")
+            year = values.get("year")
 
-        # Fallback: use the whole URI as ID (not ideal but safe)
-        logger.warning(f"Could not extract slug from URI: {uri}, using full URI as ID")
-        return uri
+            # Generate ID if missing or empty
+            if not film_id and film_title:
+                values["film_id"] = cls.generate_film_id(film_title, year)
 
-    @field_validator("film_id", "film_full_title", "film_title")
+            # Set date_added to today if not provided
+            if not values.get("date_added"):
+                values["date_added"] = date.today().isoformat()
+
+        return values
+
+    @field_validator("film_full_title", "film_title", "date_added")
+    @classmethod
     def validate_non_empty_strings(cls, v: str) -> str:
         """Ensure string fields are not empty."""
         if not v or not v.strip():
             raise ValueError("Field cannot be empty")
         return v.strip()
+
+    @field_validator("film_id")
+    @classmethod
+    def validate_film_id(cls, v: str) -> str:
+        """Ensure film_id is not empty."""
+        if not v:
+            raise ValueError("film_id cannot be empty")
+        return v
 
     class Config:
         frozen = True  # Make instances immutable
@@ -145,10 +106,16 @@ class ScrapingResult(BaseModel):
     """Represents the result of a scraping operation."""
 
     films: list[Film] = Field(default_factory=list, description="List of scraped films")
-    total_pages_scraped: int = Field(default=0, ge=0, description="Number of pages scraped")
+    total_pages_scraped: int = Field(
+        default=0, ge=0, description="Number of pages scraped"
+    )
     success: bool = Field(default=True, description="Whether scraping was successful")
-    error_message: Optional[str] = Field(default=None, description="Error message if scraping failed")
-    source: str = Field(default="unknown", description="Source of the data (html, csv, etc.)")
+    error_message: Optional[str] = Field(
+        default=None, description="Error message if scraping failed"
+    )
+    source: str = Field(
+        default="unknown", description="Source of the data (html, csv, etc.)"
+    )
 
     @property
     def film_count(self) -> int:
@@ -169,5 +136,5 @@ class ScrapingResult(BaseModel):
             "total_pages_scraped": self.total_pages_scraped,
             "success": self.success,
             "error_message": self.error_message,
-            "films": [film.model_dump() for film in self.films]
+            "films": [film.model_dump() for film in self.films],
         }
