@@ -175,6 +175,66 @@ class TMDBEnricher(BaseEnricher):
             self.logger.error(f"TMDB search failed for '{title}': {e}")
             return None
 
+    def _search_movie_fuzzy_year(
+        self, title: str, year: Optional[int] = None
+    ) -> Optional[dict]:
+        """
+        Search for a movie on TMDB with fuzzy year matching (±1 year).
+
+        Handles year mismatches between Letterboxd and TMDB by trying:
+        1. Exact year match
+        2. Year + 1 (TMDB often has later release dates)
+        3. Year - 1 (TMDB might have earlier premiere dates)
+        4. No year constraint (as fallback)
+
+        Args:
+            title: Movie title
+            year: Optional release year from Letterboxd
+
+        Returns:
+            Best matching movie result or None
+        """
+        # Try exact year first
+        if year:
+            result = self._search_movie(title, year)
+            if result:
+                return result
+
+            # Try year + 1 (most common mismatch)
+            self.logger.debug(f"No exact match, trying year+1: {year + 1}")
+            result = self._search_movie(title, year + 1)
+            if result:
+                self.logger.info(
+                    f"Found match with year+1: {year + 1} instead of {year}"
+                )
+                return result
+
+            # Try year - 1 (less common but happens with festival premieres)
+            self.logger.debug(f"No match with year+1, trying year-1: {year - 1}")
+            result = self._search_movie(title, year - 1)
+            if result:
+                self.logger.info(
+                    f"Found match with year-1: {year - 1} instead of {year}"
+                )
+                return result
+
+            # Fall back to search without year
+            self.logger.debug(f"No match with year±1, trying without year constraint")
+
+        # Search without year constraint
+        result = self._search_movie(title, None)
+        if result and year:
+            tmdb_year_str = result.get("release_date", "")[:4]
+            if tmdb_year_str:
+                tmdb_year = int(tmdb_year_str)
+                year_diff = abs(tmdb_year - year)
+                if year_diff > 1:
+                    self.logger.warning(
+                        f"Year mismatch > 1: Letterboxd={year}, TMDB={tmdb_year}"
+                    )
+
+        return result
+
     def _get_watch_providers(self, movie_id: int) -> dict:
         """
         Get streaming providers for a movie across all countries.
@@ -291,13 +351,14 @@ class TMDBEnricher(BaseEnricher):
         )
         return offers
 
-    def enrich(self, title: str, year: Optional[int] = None) -> EnrichmentResult:
+    def enrich(self, title: str, year: Optional[int] = None, fuzzy_year: bool = True) -> EnrichmentResult:
         """
         Enrich a film with TMDB streaming availability data.
 
         Args:
             title: Film title
             year: Optional release year
+            fuzzy_year: Whether to use fuzzy year matching (±1 year)
 
         Returns:
             EnrichmentResult with streaming data
@@ -305,8 +366,11 @@ class TMDBEnricher(BaseEnricher):
         self.logger.info(f"Enriching: '{title}' ({year or 'no year'})")
 
         try:
-            # Search for movie
-            movie_data = self._search_movie(title, year)
+            # Search for movie (with fuzzy year matching by default)
+            if fuzzy_year:
+                movie_data = self._search_movie_fuzzy_year(title, year)
+            else:
+                movie_data = self._search_movie(title, year)
 
             if not movie_data:
                 return EnrichmentResult(
