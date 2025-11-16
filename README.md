@@ -1,337 +1,222 @@
-# ScreenSeeker - Letterboxd Scraper
+# ScreenSeeker 🎬
 
-A professional Python scraper for extracting and managing film data from Letterboxd watchlists. Supports both HTML web scraping and CSV export parsing with a clean, modular architecture.
+Find where to watch films from your Letterboxd watchlist with personalized recommendations based on your streaming subscriptions.
 
 ## Features
 
-- **Dual Scraping Methods**
-  - HTML scraping: Automatically paginate through Letterboxd watchlist pages
-  - CSV parsing: Process official Letterboxd export files
+- **Personalized Recommendations** - Analyzes YOUR specific subscriptions (Netflix, Prime, Canal+, etc.)
+- **VPN-Aware** - Suggests which countries to connect to for optimal streaming
+- **Smart Caching** - 7-day local database cache for instant queries
+- **Letterboxd Integration** - Import your watchlist via HTML scraping or CSV
+- **Watch Tracking** - Mark films as watched and manage your progress
 
-- **Smart Data Parsing**
-  - Automatic title and year extraction from various formats
-  - Unique film ID generation from Letterboxd URIs
-  - Handles missing or malformed data gracefully
+## Quick Start
 
-- **Professional Architecture**
-  - Pydantic models for data validation
-  - Abstract base classes for extensibility
-  - Modular design with separation of concerns
-  - Type hints throughout
-
-- **Data Export**
-  - JSON export with metadata (timestamps, source info, statistics)
-  - Optional raw HTML archiving for analysis
-  - Timestamped output files
-
-- **Configuration-Based**
-  - User preference selection (HTML vs CSV)
-  - Configurable delays and timeouts
-  - Flexible output options
-
-## Installation
-
-### Prerequisites
-- Python 3.10+
-- Poetry (recommended) or pip
-
-### Using Poetry
+### 1. Install
 
 ```bash
+# Clone the repository
+git clone https://github.com/yourusername/screenseeker.git
+cd screenseeker
+
 # Install dependencies
 poetry install
-
-# Activate virtual environment
-poetry shell
-```
-
-### Using pip
-
-```bash
-# Install dependencies
+# or
 pip install -r requirements.txt
 ```
 
-### Required Dependencies
-
-- `requests` - HTTP requests for web scraping
-- `beautifulsoup4` - HTML parsing
-- `pydantic` - Data validation and models
-- `lxml` - XML/HTML parser (recommended for BeautifulSoup)
-
-## Configuration
-
-Edit `config.py` to customize scraper behavior:
-
-```python
-# User Configuration
-USERNAME = "your_letterboxd_username"
-
-# Scraper Configuration
-SCRAPER_TYPE = "html"  # Options: "html" or "csv"
-CSV_FILE_PATH = "./letterboxd_export.csv"  # Used when SCRAPER_TYPE="csv"
-
-# Output Configuration
-OUTPUT_DIR = Path("./output")
-SAVE_RAW_DATA = True  # Save raw HTML or CSV for analysis
-
-# HTML Scraper Settings
-HTML_DELAY_BETWEEN_REQUESTS = 2.0  # Seconds (be respectful!)
-HTML_TIMEOUT = 10  # Request timeout in seconds
-
-# Logging Configuration
-LOG_LEVEL = "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
-```
-
-## Usage
-
-### HTML Scraping (Default)
-
-Scrape directly from a Letterboxd watchlist:
+### 2. Configure
 
 ```bash
-# 1. Set your username in config.py
-USERNAME = "your_username"
+# Copy environment template
+cp .env.example .env
 
-# 2. Set scraper type
-SCRAPER_TYPE = "html"
-
-# 3. Run the scraper
-python main.py
+# Edit .env and add your TMDB API key
+# Get free key at: https://www.themoviedb.org/settings/api
+nano .env
 ```
 
-### CSV Parsing
+**Required in `.env`:**
+```
+TMDB_API_KEY=your_api_key_here
+LETTERBOXD_USERNAME=your_username
+```
 
-Parse an official Letterboxd export file:
+### 3. Run
 
 ```bash
-# 1. Export your data from Letterboxd:
-#    Settings → Import & Export → Export Your Data
+# Find where to watch a film
+python cli.py watch "The Matrix (1999)"
 
-# 2. Update config.py
-SCRAPER_TYPE = "csv"
-CSV_FILE_PATH = "./path/to/watchlist.csv"
+# Sync your Letterboxd watchlist
+python cli.py sync
 
-# 3. Run the scraper
-python main.py
+# Search your library
+python cli.py search matrix
 ```
 
-## Output Structure
+## Example Output
 
 ```
-output/
-├── letterboxd_films_html_20250104_143022.json
-├── letterboxd_films_csv_20250104_150000.json
-└── raw_html/
-    └── 20250104_143022/
-        ├── page_0001.html
-        ├── page_0002.html
-        └── ...
+🔍 Searching for: 'The Matrix' (1999)
+================================================================================
+HOW TO WATCH
+================================================================================
+
+📽️  'The Matrix' (1999)
+🎯 TMDB Match: The Matrix (1999) - Confidence: exact
+   ⭐ Rating: 8.2/10
+
+✅ WATCH NOW (No VPN needed):
+   🇫🇷 Netflix - France
+
+🌍 VPN OPTIONS:
+   🇺🇸 Netflix - Connect to United States
+   🇬🇧 Prime Video - Connect to United Kingdom
+
+💰 RENT/BUY:
+   Rent: Apple TV, Google Play Movies
+
+📊 Summary:
+   Global: 122 countries, 45 providers
+   Your subscriptions: 12 options
+================================================================================
 ```
 
-### JSON Output Format
+## Common Commands
 
-```json
-{
-  "scraped_at": "2025-01-04T14:30:22.123456",
-  "source": "html",
-  "total_films": 245,
-  "total_pages_scraped": 5,
-  "success": true,
-  "error_message": null,
-  "films": [
-    {
-      "film_id": "the-matrix",
-      "film_full_title": "The Matrix (1999)",
-      "film_title": "The Matrix",
-      "year": 1999,
-      "letterboxd_uri": "https://letterboxd.com/film/the-matrix/",
-      "date_added": "2024-12-15"
-    }
-  ]
-}
+```bash
+# Database setup
+python cli.py db init
+
+# Import watchlist
+python cli.py sync --method csv --csv-file watchlist.csv
+
+# Find where to watch
+python cli.py watch "Inception" --year 2010
+
+# Mark as watched
+python cli.py watched "The Matrix"
+
+# Search your library
+python cli.py search "blade runner"
+
+# Query by provider
+python cli.py providers --provider Netflix --country FR
+
+# Generate availability report
+python cli.py report
+
+# Refresh stale data
+python cli.py refresh --days 7
 ```
+
+## Documentation
+
+- **[User Guide](docs/USER_GUIDE.md)** - Complete usage guide
+- **[CLI Reference](docs/CLI_REFERENCE.md)** - All commands and options
+- **[Development Guide](docs/DEVELOPMENT.md)** - Contributing and architecture
+- **[Technical Audit](AUDIT.md)** - Codebase analysis and recommendations
 
 ## Project Structure
 
 ```
 screenseeker/
-├── models.py                    # Pydantic data models
-│   ├── Film                     # Film data model
-│   └── ScrapingResult           # Result container
-│
-├── scrapers/                    # Scraper implementations
-│   ├── __init__.py             # Package exports
-│   ├── base.py                 # Abstract base scraper
-│   ├── html_scraper.py         # HTML web scraper
-│   └── csv_scraper.py          # CSV parser
-│
-├── exporters/                   # Export functionality
-│   ├── __init__.py             # Package exports
-│   └── json_exporter.py        # JSON export
-│
-├── config.py                    # Configuration settings
-├── main.py                      # Entry point & orchestration
-└── README.md                    # This file
+├── cli.py              # Main CLI interface
+├── config.py           # Configuration (uses .env)
+├── database/           # SQLAlchemy ORM & queries
+├── enrichers/          # TMDB API & watch strategy
+├── scrapers/           # Letterboxd HTML/CSV import
+├── exporters/          # JSON export
+└── tests/              # Test suite
 ```
 
-## How It Works
+## Configuration
 
-### HTML Scraping Flow
+Edit `.env` to customize:
 
-1. **Initialization**: `HTMLScraper` connects to Letterboxd with appropriate headers
-2. **Pagination**: Iterates through pages (`/page/1/`, `/page/2/`, etc.)
-3. **Parsing**: Extracts film data from HTML grid items using BeautifulSoup
-4. **Data Creation**: Creates `Film` objects with parsed title and year
-5. **Export**: Saves results to timestamped JSON file
+```bash
+# TMDB Settings
+TMDB_API_KEY=your_key
+TMDB_RATE_LIMIT=5.0
+TMDB_LANGUAGE=en-US
 
-### CSV Parsing Flow
+# Letterboxd
+LETTERBOXD_USERNAME=your_username
 
-1. **Validation**: Checks CSV file exists and has required columns
-2. **Reading**: Uses `csv.DictReader` for column-based parsing
-3. **ID Extraction**: Extracts film slug from Letterboxd URI
-4. **Data Creation**: Creates `Film` objects from CSV rows
-5. **Export**: Saves results to timestamped JSON file
+# Logging
+LOG_LEVEL=INFO
+LOG_TO_FILE=False
+```
 
-### Film ID Generation
-
-- **HTML**: Uses the `data-film-id` attribute from the page
-- **CSV**: Extracts slug from Letterboxd URI
-  - Input: `https://letterboxd.com/film/the-matrix/`
-  - Output: `the-matrix`
-
-## Data Models
-
-### Film
+Edit `config.py` for subscription profile:
 
 ```python
-Film(
-    film_id: str                    # Unique identifier (slug)
-    film_full_title: str            # "The Matrix (1999)"
-    film_title: str                 # "The Matrix"
-    year: Optional[int]             # 1999
-    letterboxd_uri: Optional[str]   # Full URL (CSV only)
-    date_added: Optional[str]       # Date added to watchlist (CSV only)
-)
+SUBSCRIPTION_PROFILE = {
+    "base_country": "FR",
+    "subscriptions": [
+        {
+            "provider_names": ["Netflix"],
+            "vpn_enabled": True,
+        },
+        {
+            "provider_names": ["Canal+"],
+            "vpn_enabled": False,
+            "bundle_includes": ["HBO Max", "Apple TV+"],
+        }
+    ]
+}
 ```
 
-### ScrapingResult
+## Requirements
 
-```python
-ScrapingResult(
-    films: list[Film]               # List of scraped films
-    total_pages_scraped: int        # Number of pages processed
-    success: bool                   # Whether scraping succeeded
-    error_message: Optional[str]    # Error details if failed
-    source: str                     # "html" or "csv"
-)
+- Python 3.14+
+- TMDB API key (free at [themoviedb.org](https://www.themoviedb.org/settings/api))
+- Optional: Letterboxd account for watchlist import
+
+## Testing
+
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=. --cov-report=html
+
+# Run specific test file
+pytest tests/test_database_queries.py -v
 ```
-
-## Extending the Project
-
-### Adding a New Scraper
-
-1. Create a new file in `scrapers/` (e.g., `api_scraper.py`)
-2. Inherit from `BaseScraper`
-3. Implement the `scrape()` method
-4. Return a `ScrapingResult` object
-5. Add to `scrapers/__init__.py`
-6. Update config options
-
-```python
-from scrapers.base import BaseScraper
-from models import Film, ScrapingResult
-
-class APIScraper(BaseScraper):
-    def scrape(self) -> ScrapingResult:
-        # Your implementation
-        return ScrapingResult(
-            films=films,
-            success=True,
-            source="api"
-        )
-```
-
-### Adding a New Exporter
-
-1. Create a new file in `exporters/` (e.g., `csv_exporter.py`)
-2. Implement export logic
-3. Add to `exporters/__init__.py`
-
-## Error Handling
-
-The scraper handles various error scenarios:
-
-- **Network errors**: Timeouts, connection issues
-- **Parsing errors**: Missing data, malformed HTML/CSV
-- **File errors**: Missing CSV files, permission issues
-- **Validation errors**: Invalid data that doesn't meet Pydantic constraints
-
-All errors are logged with appropriate detail levels.
-
-## Best Practices
-
-### When Using HTML Scraper
-
-- Set reasonable delays (2+ seconds) to avoid rate limiting
-- Use `SAVE_RAW_DATA=True` for debugging or later analysis
-- Respect Letterboxd's servers - don't run repeatedly
-
-### When Using CSV Parser
-
-- Export fresh data from Letterboxd regularly
-- Verify CSV has required columns: `Name`, `Year`, `Letterboxd URI`
-- Optional `Date` column will be preserved if present
 
 ## Troubleshooting
 
-### "CSV file not found"
-- Check `CSV_FILE_PATH` in `config.py`
-- Verify file exists at specified path
-- Use absolute path if relative path fails
+**"TMDB API key not configured"**
+→ Set `TMDB_API_KEY` in your `.env` file
 
-### "Missing required columns in CSV"
-- Ensure CSV is from Letterboxd export (not manually created)
-- Check column names match exactly: `Name`, `Year`, `Letterboxd URI`
+**"Film not found"**
+→ Try adding the year: `python cli.py watch "Dune" --year 2021`
 
-### "Received status code 404"
-- Verify `USERNAME` in `config.py` is correct
-- Check that the watchlist is public (not private)
-- Try accessing the URL in a browser first
-
-### No films found
-- Watchlist may be empty or private
-- HTML structure may have changed (update selectors)
-- Check logs for specific error messages
-
-## Future Enhancements
-
-Potential features for future development:
-
-- [ ] SQLite database integration for persistent storage
-- [ ] Multiple watchlist support (different users)
-- [ ] Film metadata enrichment (TMDB/IMDB integration)
-- [ ] Watched films scraping (not just watchlist)
-- [ ] Diary entries and reviews extraction
-- [ ] Duplicate detection and merging
-- [ ] Data analytics and visualization
-- [ ] CLI arguments for runtime configuration
-- [ ] Async/parallel scraping for better performance
-
-## License
-
-This project is for personal use and educational purposes. Please respect Letterboxd's Terms of Service and use responsibly.
+**"No films found"**
+→ Run `python cli.py sync` first to import your watchlist
 
 ## Contributing
 
-This is a personal project, but suggestions and improvements are welcome!
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests
+5. Submit a pull request
 
-## Acknowledgments
+See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for details.
 
-- Built with [Pydantic](https://pydantic-docs.helpmanual.io/) for data validation
-- Powered by [BeautifulSoup](https://www.crummy.com/software/BeautifulSoup/) for HTML parsing
-- Data sourced from [Letterboxd](https://letterboxd.com/)
+## License
+
+MIT License - see LICENSE file for details
+
+## Links
+
+- TMDB API: https://www.themoviedb.org/settings/api
+- Letterboxd: https://letterboxd.com/
 
 ---
 
-**Note**: This is an unofficial tool and is not affiliated with Letterboxd. Please use responsibly and respect the platform's resources.
+**Made with ❤️ for cinephiles who want to actually watch their watchlist**
