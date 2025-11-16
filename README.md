@@ -59,57 +59,10 @@ python cli.py search matrix
 
 ```
 🔍 Searching for: 'The Matrix' (1999)
+```
 ================================================================================
 HOW TO WATCH
 ================================================================================
-
-📽️  'The Matrix' (1999)
-🎯 TMDB Match: The Matrix (1999) - Confidence: exact
-   ⭐ Rating: 8.2/10
-
-✅ WATCH NOW (No VPN needed):
-   🇫🇷 Netflix - France
-
-🌍 VPN OPTIONS:
-   🇺🇸 Netflix - Connect to United States
-   🇬🇧 Prime Video - Connect to United Kingdom
-
-💰 RENT/BUY:
-   Rent: Apple TV, Google Play Movies
-
-📊 Summary:
-   Global: 122 countries, 45 providers
-   Your subscriptions: 12 options
-================================================================================
-```
-
-## Common Commands
-
-```bash
-# Database setup
-python cli.py db init
-
-# Import watchlist
-python cli.py sync --method csv --csv-file watchlist.csv
-
-# Find where to watch
-python cli.py watch "Inception" --year 2010
-
-# Mark as watched
-python cli.py watched "The Matrix"
-
-# Search your library
-python cli.py search "blade runner"
-
-# Query by provider
-python cli.py providers --provider Netflix --country FR
-
-# Generate availability report
-python cli.py report
-
-# Refresh stale data
-python cli.py refresh --days 7
-```
 
 ## Documentation
 
@@ -151,6 +104,7 @@ LOG_TO_FILE=False
 
 Edit `config.py` for subscription profile:
 
+Colored console output with configurable levels:
 ```python
 SUBSCRIPTION_PROFILE = {
     "base_country": "FR",
@@ -187,7 +141,8 @@ pytest --cov=. --cov-report=html
 pytest tests/test_database_queries.py -v
 ```
 
-## Troubleshooting
+    if strategy.best_option:
+        print(f"Watch on {strategy.best_option.provider}")
 
 **"TMDB API key not configured"**
 → Set `TMDB_API_KEY` in your `.env` file
@@ -208,7 +163,7 @@ pytest tests/test_database_queries.py -v
 
 See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for details.
 
-## License
+## Limitations
 
 MIT License - see LICENSE file for details
 
