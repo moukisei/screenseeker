@@ -3,7 +3,7 @@ name = "screenseeker"
 version = "0.1.0"
 description = "Find where to watch films from your Letterboxd watchlist"
 authors = [
-    {name = "Your Name",email = "you@example.com"}
+    {name = "Mouktar ABDILLAHI",email = "mouktar.abdillahi1@gmail.com"}
 ]
 readme = "README.md"
 requires-python = ">=3.14"
@@ -20,6 +20,9 @@ dependencies = [
     "pytest (>=9.0.0,<10.0.0)",
     "python-dotenv (>=1.2.1,<2.0.0)"
 ]
+
+[tool.poetry]
+license = "Apache-2.0"
 
 [project.scripts]
 screenseeker = "cli:cli"
