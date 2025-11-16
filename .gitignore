@@ -1,6 +1,13 @@
 # Project-specific
 output/
 letterboxd_export.csv
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+docs_archive/
+*.backup
 
 # IDE
 .idea/

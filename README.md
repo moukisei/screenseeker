@@ -1,293 +1,177 @@
-# ScreenSeeker
+# ScreenSeeker 🎬
 
-Letterboxd watchlist scraper + streaming availability finder with personalized recommendations based on your subscriptions and VPN.
+Find where to watch films from your Letterboxd watchlist with personalized recommendations based on your streaming subscriptions.
 
 ## Features
 
-- **Scraping**: Extract films from Letterboxd (HTML or CSV)
-- **Enrichment**: Find global streaming availability via TMDB API
-- **Smart Recommendations**: Personalized watch strategy based on your subscriptions
-- **VPN-Aware**: Prioritizes English-speaking countries, respects VPN limitations
-
-## Installation
-
-```bash
-poetry install
-# or
-pip install requests beautifulsoup4 pydantic tenacity
-```
+- **Personalized Recommendations** - Analyzes YOUR specific subscriptions (Netflix, Prime, Canal+, etc.)
+- **VPN-Aware** - Suggests which countries to connect to for optimal streaming
+- **Smart Caching** - 7-day local database cache for instant queries
+- **Letterboxd Integration** - Import your watchlist via HTML scraping or CSV
+- **Watch Tracking** - Mark films as watched and manage your progress
 
 ## Quick Start
 
-### 1. Configuration (`config.py`)
-
-```python
-# Scraping
-USERNAME = "your_letterboxd_username"
-SCRAPER_TYPE = "html"  # or "csv"
-
-# TMDB (get free key at themoviedb.org)
-TMDB_API_KEY = "your_api_key"
-
-# Your subscriptions
-SUBSCRIPTION_PROFILE = {
-    "base_country": "FR",
-    "subscriptions": [
-        {
-            "provider_names": ["Netflix"],
-            "vpn_enabled": True,
-        },
-        # ... add yours
-    ]
-}
-```
-
-### 2. Scrape Watchlist
+### 1. Install
 
 ```bash
-# HTML scraping
-python main.py
+# Clone the repository
+git clone https://github.com/yourusername/screenseeker.git
+cd screenseeker
 
-# CSV parsing (export from Letterboxd first)
-# Set SCRAPER_TYPE = "csv" in config.py
-python main.py
+# Install dependencies
+poetry install
+# or
+pip install -r requirements.txt
 ```
 
-**Output**: `output/letterboxd_films_html_YYYYMMDD_HHMMSS.json`
-
-### 3. Find Where to Watch
+### 2. Configure
 
 ```bash
-python enrich.py "The Matrix (1999)"
+# Copy environment template
+cp .env.example .env
+
+# Edit .env and add your TMDB API key
+# Get free key at: https://www.themoviedb.org/settings/api
+nano .env
 ```
 
-**Output**:
+**Required in `.env`:**
+```
+TMDB_API_KEY=your_api_key_here
+LETTERBOXD_USERNAME=your_username
+```
+
+### 3. Run
+
+```bash
+# Find where to watch a film
+python cli.py watch "The Matrix (1999)"
+
+# Sync your Letterboxd watchlist
+python cli.py sync
+
+# Search your library
+python cli.py search matrix
+```
+
+## Example Output
+
+```
+🔍 Searching for: 'The Matrix' (1999)
 ```
 ================================================================================
 HOW TO WATCH
 ================================================================================
 
-📽️  'The Matrix' (1999)
-🎯 TMDB Match: The Matrix (1999) - Confidence: exact
-   ⭐ Rating: 8.2/10
+## Documentation
 
-✅ WATCH NOW (No VPN needed):
-   🇫🇷 Netflix - France
-
-🌍 VPN OPTIONS (Use NordVPN):
-   🇺🇸 Netflix - Connect to United States
-   🇬🇧 Prime Video - Connect to United Kingdom
-   🇨🇦 Netflix - Connect to Canada
-
-💰 RENT/BUY IN FRANCE:
-   Rent: Apple TV, Google Play Movies
-```
+- **[User Guide](docs/USER_GUIDE.md)** - Complete usage guide
+- **[CLI Reference](docs/CLI_REFERENCE.md)** - All commands and options
+- **[Development Guide](docs/DEVELOPMENT.md)** - Contributing and architecture
+- **[Technical Audit](AUDIT.md)** - Codebase analysis and recommendations
 
 ## Project Structure
 
 ```
 screenseeker/
-├── main.py              # Scraper entry point
-├── enrich.py            # Enrichment CLI
-├── config.py            # Configuration
-├── models.py            # Film data models
-├── logger.py            # Centralized logging
-│
-├── scrapers/            # Letterboxd scrapers
-│   ├── base.py         # Abstract base
-│   ├── html_scraper.py # HTML scraping
-│   └── csv_scraper.py  # CSV parsing
-│
-├── enrichers/           # Streaming availability
-│   ├── enrichment_models.py  # Data models
-│   ├── tmdb_enricher.py      # TMDB API
-│   └── watch_strategy.py     # Personalized recommendations
-│
-└── exporters/           # Data export
-    └── json_exporter.py
+├── cli.py              # Main CLI interface
+├── config.py           # Configuration (uses .env)
+├── database/           # SQLAlchemy ORM & queries
+├── enrichers/          # TMDB API & watch strategy
+├── scrapers/           # Letterboxd HTML/CSV import
+├── exporters/          # JSON export
+└── tests/              # Test suite
 ```
 
-## Data Models
+## Configuration
 
-### Film (Scraping)
-```python
-{
-  "film_id": "a1b2c3d4e5f6",      # Auto-generated hash
-  "film_full_title": "The Matrix (1999)",
-  "film_title": "The Matrix",
-  "year": 1999,
-  "date_added": "2025-01-04"       # From CSV or today
-}
+Edit `.env` to customize:
+
+```bash
+# TMDB Settings
+TMDB_API_KEY=your_key
+TMDB_RATE_LIMIT=5.0
+TMDB_LANGUAGE=en-US
+
+# Letterboxd
+LETTERBOXD_USERNAME=your_username
+
+# Logging
+LOG_LEVEL=INFO
+LOG_TO_FILE=False
 ```
 
-### EnrichmentResult
-```python
-{
-  "tmdb_movie": {...},              # TMDB metadata
-  "match_confidence": "exact",       # exact/high/medium/low
-  "streaming_offers": [...],         # All global offers
-  "total_countries": 45,
-  "total_providers": 12
-}
-```
+Edit `config.py` for subscription profile:
 
-### WatchStrategy
-```python
-{
-  "best_option": {...},              # No VPN needed
-  "vpn_options": [...],              # Top 3 VPN countries
-  "base_country_alternatives": [...] # Rent/buy options
-}
-```
-
-## Configuration Details
-
-### Scraper Settings
-```python
-SCRAPER_TYPE = "html"                    # or "csv"
-CSV_FILE_PATH = "./export.csv"
-HTML_DELAY_BETWEEN_REQUESTS = 2.0       # Rate limiting
-SAVE_RAW_DATA = True                     # Save raw HTML
-```
-
-### Enrichment Settings
-```python
-TMDB_API_KEY = "your_key"               # Required
-TMDB_RATE_LIMIT = 5.0                   # Req/second
-TMDB_LANGUAGE = "en-US"                 # Metadata language
-```
-
-### Subscription Profile
+Colored console output with configurable levels:
 ```python
 SUBSCRIPTION_PROFILE = {
     "base_country": "FR",
     "subscriptions": [
         {
-            "provider_names": ["Canal+"],
-            "vpn_enabled": False,           # Blocks VPN
-            "available_countries": ["FR"],
-            "bundle_includes": ["HBO Max", "Apple TV+", "Paramount+"]
-        },
-        {
             "provider_names": ["Netflix"],
             "vpn_enabled": True,
-            "available_countries": "all"
+        },
+        {
+            "provider_names": ["Canal+"],
+            "vpn_enabled": False,
+            "bundle_includes": ["HBO Max", "Apple TV+"],
         }
-    ],
-    "vpn_country_priority": [
-        "US", "GB", "CA", "AU", "NZ", "IE",  # English-speaking
-        "DE", "ES", "IT", "NL", ...           # European
-    ],
-    "max_vpn_suggestions": 3
+    ]
 }
 ```
 
-## Logging
+## Requirements
 
-Colored console output with configurable levels:
-```python
-LOG_LEVEL = "INFO"      # DEBUG/INFO/WARNING/ERROR/CRITICAL
-LOG_TO_FILE = False     # Set True to log to output/scraper.log
-```
+- Python 3.14+
+- TMDB API key (free at [themoviedb.org](https://www.themoviedb.org/settings/api))
+- Optional: Letterboxd account for watchlist import
 
-Colors: DEBUG (cyan), INFO (green), WARNING (yellow), ERROR (red), CRITICAL (magenta)
+## Testing
 
-## Key Features
-
-### Scraping
-- **Rate limiting**: Respects Letterboxd servers (2s delay)
-- **Title parsing**: Extracts title and year from "Title (YYYY)"
-- **Auto ID generation**: Deterministic hash from title+year
-- **Dual source**: HTML for live data, CSV for exports
-
-### Enrichment
-- **TMDB integration**: Official API, 50 req/s limit
-- **Global coverage**: 50+ countries automatically
-- **Match confidence**: Scores how well TMDB result matches query
-- **Retry logic**: Exponential backoff (3 attempts, 2s→4s→8s max)
-
-### Watch Strategy
-- **Fuzzy matching**: Handles provider name variations (80% similarity)
-- **Bundle handling**: Recognizes Canal+ includes HBO Max/Apple TV+/Paramount+
-- **VPN prioritization**: English-speaking countries first
-- **Smart filtering**: Only shows your owned subscriptions
-- **Tie handling**: Shows all equal-priority options
-
-## Usage Examples
-
-### Scrape and Save
 ```bash
-python main.py
-# Output: output/letterboxd_films_html_20250104_143022.json
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=. --cov-report=html
+
+# Run specific test file
+pytest tests/test_database_queries.py -v
 ```
-
-### Find Streaming Options
-```bash
-# Single film
-python enrich.py "Inception (2010)"
-
-# Interactive mode
-python enrich.py
-```
-
-### Python API
-```python
-from enrichers import TMDBEnricher, WatchStrategyAnalyzer
-import config
-
-with TMDBEnricher(api_key=config.TMDB_API_KEY) as enricher:
-    result = enricher.enrich("The Matrix", 1999)
-
-    analyzer = WatchStrategyAnalyzer(config.SUBSCRIPTION_PROFILE)
-    strategy = analyzer.analyze(result)
 
     if strategy.best_option:
         print(f"Watch on {strategy.best_option.provider}")
 
-    for opt in strategy.vpn_options:
-        print(f"VPN to {opt.country_code}: {opt.provider}")
-```
-
-## Troubleshooting
-
 **"TMDB API key not configured"**
-→ Get free key at https://www.themoviedb.org/settings/api
+→ Set `TMDB_API_KEY` in your `.env` file
 
-**"No TMDB results"**
-→ Add release year for better matching
+**"Film not found"**
+→ Try adding the year: `python cli.py watch "Dune" --year 2021`
 
-**"CSV file not found"**
-→ Export from Letterboxd: Settings → Import & Export → Export Your Data
+**"No films found"**
+→ Run `python cli.py sync` first to import your watchlist
 
-**No VPN options shown**
-→ Check that Netflix/Prime are in your `SUBSCRIPTION_PROFILE` with `vpn_enabled: True`
+## Contributing
 
-**Rate limit errors (429)**
-→ Decrease `TMDB_RATE_LIMIT` in config.py
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests
+5. Submit a pull request
+
+See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for details.
 
 ## Limitations
 
-- **No language data**: TMDB doesn't provide audio/subtitle languages per offer
-- **Title matching only**: Best results with year included
-- **No caching yet**: Each query hits TMDB API (Phase 2 feature)
-- **VPN detection**: Canal+ blocks VPN, hardcoded in config
+MIT License - see LICENSE file for details
 
-## Future Features
+## Links
 
-- [ ] SQLite database integration
-- [ ] Batch enrichment from watchlist JSON
-- [ ] Results caching (7-day TTL)
-- [ ] Language data from alternative APIs
-- [ ] Web UI for browsing results
-- [ ] Watched films tracking
-
-## License
-
-Personal use and educational purposes. Respect Letterboxd and TMDB Terms of Service.
+- TMDB API: https://www.themoviedb.org/settings/api
+- Letterboxd: https://letterboxd.com/
 
 ---
 
-**Quick Links**
-- Letterboxd: https://letterboxd.com/
-- TMDB API: https://www.themoviedb.org/settings/api
-- TMDB Docs: https://developers.themoviedb.org/3
+**Made with ❤️ for cinephiles who want to actually watch their watchlist**
