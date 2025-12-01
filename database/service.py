@@ -9,10 +9,10 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from database.models import Film, StreamingOffer
+from database.models import Film
 from database.queries import (
-    get_film_by_tmdb_id,
     get_film_by_title_year,
+    get_film_by_tmdb_id,
     get_or_create_film,
     save_streaming_offers,
 )
@@ -74,9 +74,7 @@ def enrich_and_save_film(
         film = get_film_by_tmdb_id(session, enrichment.tmdb_movie.tmdb_id)
 
     if film:
-        logger.info(
-            f"Film already exists in database: {film.full_title} (ID: {film.id})"
-        )
+        logger.info(f"Film already exists in database: {film.full_title} (ID: {film.id})")
 
         # Check if we need to refresh streaming offers
         if force_refresh or needs_refresh(film):
@@ -156,16 +154,12 @@ def create_film_from_enrichment(
     )
 
     if year_mismatch:
-        logger.warning(
-            f"Year mismatch: Letterboxd={letterboxd_year}, TMDB={tmdb_movie.year}"
-        )
+        logger.warning(f"Year mismatch: Letterboxd={letterboxd_year}, TMDB={tmdb_movie.year}")
 
     return film
 
 
-def update_film_from_enrichment(
-    session: Session, film: Film, enrichment: EnrichmentResult
-) -> Film:
+def update_film_from_enrichment(session: Session, film: Film, enrichment: EnrichmentResult) -> Film:
     """
     Update existing film with fresh enrichment data.
 

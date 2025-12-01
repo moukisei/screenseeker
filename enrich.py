@@ -78,18 +78,16 @@ def display_watch_strategy(result, strategy):
 
     # Best option (no VPN needed)
     if strategy.best_option:
-        logger.info(f"\n✅ WATCH NOW (No VPN needed):")
+        logger.info("\n✅ WATCH NOW (No VPN needed):")
         opt = strategy.best_option
         if opt.via_bundle:
-            logger.info(
-                f"   🇫🇷 {opt.provider} (via {opt.via_bundle}) - {opt.country_name}"
-            )
+            logger.info(f"   🇫🇷 {opt.provider} (via {opt.via_bundle}) - {opt.country_name}")
         else:
             logger.info(f"   🇫🇷 {opt.provider} - {opt.country_name}")
 
     # VPN options
     if strategy.vpn_options:
-        logger.info(f"\n🌍 VPN OPTIONS (Use NordVPN):")
+        logger.info("\n🌍 VPN OPTIONS (Use NordVPN):")
         for opt in strategy.vpn_options:
             # Country flag emoji mapping for common countries
             country_flags = {
@@ -125,17 +123,13 @@ def display_watch_strategy(result, strategy):
 
     # Rent/Buy alternatives
     if strategy.base_country_alternatives:
-        logger.info(f"\n💰 RENT/BUY IN FRANCE:")
+        logger.info("\n💰 RENT/BUY IN FRANCE:")
         # Group by offer type
         rent_providers = [
-            opt.provider
-            for opt in strategy.base_country_alternatives
-            if opt.offer_type == "rent"
+            opt.provider for opt in strategy.base_country_alternatives if opt.offer_type == "rent"
         ]
         buy_providers = [
-            opt.provider
-            for opt in strategy.base_country_alternatives
-            if opt.offer_type == "buy"
+            opt.provider for opt in strategy.base_country_alternatives if opt.offer_type == "buy"
         ]
 
         if rent_providers:
@@ -144,7 +138,7 @@ def display_watch_strategy(result, strategy):
             logger.info(f"   Buy: {', '.join(buy_providers)}")
 
     # Summary
-    logger.info(f"\n📊 Summary:")
+    logger.info("\n📊 Summary:")
     logger.info(
         f"   Total global availability: {result.total_countries} countries, {result.total_providers} providers"
     )
@@ -173,9 +167,7 @@ def main():
     if not config.TMDB_API_KEY or config.TMDB_API_KEY == "your_tmdb_api_key_here":
         logger.error("❌ TMDB API key not configured!")
         logger.error("Please set TMDB_API_KEY in config.py")
-        logger.error(
-            "Get your free API key at: https://www.themoviedb.org/settings/api"
-        )
+        logger.error("Get your free API key at: https://www.themoviedb.org/settings/api")
         return 1
 
     # Get input from user

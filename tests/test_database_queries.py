@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from database.models import Film, StreamingOffer
+from database.models import StreamingOffer
 from database.queries import (
     get_database_stats,
     get_film_by_title_year,

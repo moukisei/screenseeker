@@ -2,12 +2,11 @@
 Database session management and engine setup.
 """
 
-import os
 from contextlib import contextmanager
 from pathlib import Path
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from database.models import Base
 from logger import get_logger

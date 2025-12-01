@@ -23,6 +23,9 @@ cd screenseeker
 poetry install
 # or
 pip install -r requirements.txt
+
+# (Optional) Set up pre-commit hooks for development
+pre-commit install
 ```
 
 ### 2. Configure
@@ -157,9 +160,20 @@ pytest tests/test_database_queries.py -v
 
 1. Fork the repository
 2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
+3. Install pre-commit hooks: `pre-commit install`
+4. Make your changes (pre-commit will run automatically)
+5. Add tests
+6. Submit a pull request
+
+### Pre-commit Hooks
+
+This project uses pre-commit hooks to maintain code quality:
+- **Ruff**: Fast linting and formatting
+- **isort**: Import sorting
+- **mypy**: Static type checking
+- **Bandit**: Security checks
+
+Run manually: `pre-commit run --all-files`
 
 See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for details.
 

@@ -18,9 +18,7 @@ class WatchOption(BaseModel):
     vpn_required: bool = Field(..., description="Whether VPN is needed")
     offer_type: str = Field(..., description="Offer type: flatrate, rent, buy, etc.")
     priority_score: int = Field(..., description="Priority score (lower is better)")
-    via_bundle: Optional[str] = Field(
-        None, description="If accessed via bundle (e.g., 'Canal+')"
-    )
+    via_bundle: Optional[str] = Field(None, description="If accessed via bundle (e.g., 'Canal+')")
 
     class Config:
         frozen = True
@@ -33,9 +31,7 @@ class WatchStrategy(BaseModel):
     best_option: Optional[WatchOption] = Field(None, description="Best option (no VPN)")
 
     # VPN options on owned subscriptions
-    vpn_options: list[WatchOption] = Field(
-        default_factory=list, description="VPN options"
-    )
+    vpn_options: list[WatchOption] = Field(default_factory=list, description="VPN options")
 
     # Other options in base country (rent/buy)
     base_country_alternatives: list[WatchOption] = Field(
@@ -54,9 +50,7 @@ class WatchStrategy(BaseModel):
 
     def has_any_option(self) -> bool:
         """Check if any watching option is available."""
-        return bool(
-            self.best_option or self.vpn_options or self.base_country_alternatives
-        )
+        return bool(self.best_option or self.vpn_options or self.base_country_alternatives)
 
 
 class WatchStrategyAnalyzer:
@@ -195,10 +189,7 @@ class WatchStrategyAnalyzer:
         Returns:
             WatchStrategy with prioritized options
         """
-        if (
-            not enrichment_result.success
-            or enrichment_result.match_confidence == "none"
-        ):
+        if not enrichment_result.success or enrichment_result.match_confidence == "none":
             logger.warning("Cannot analyze: enrichment failed or no match")
             return WatchStrategy()
 
@@ -241,9 +232,7 @@ class WatchStrategyAnalyzer:
             if in_base_country:
                 priority_score = 0  # Highest priority
             else:
-                priority_score = (
-                    self._get_country_priority_score(offer.country_code) + 1
-                )
+                priority_score = self._get_country_priority_score(offer.country_code) + 1
 
             vpn_required = not in_base_country and vpn_enabled
 

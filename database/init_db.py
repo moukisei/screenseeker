@@ -4,7 +4,7 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from database.session import init_db, get_database_info
+from database.session import get_database_info, init_db
 from logger import get_logger, setup_logger
 
 # Setup logger
@@ -22,7 +22,7 @@ def main():
 
         # Show database info
         info = get_database_info()
-        logger.info(f"\nDatabase Information:")
+        logger.info("\nDatabase Information:")
         logger.info(f"  Location: {info['path']}")
         logger.info(f"  Status: {'Exists' if info['exists'] else 'Created'}")
 

@@ -82,6 +82,7 @@ def cli():
 # USE CASE 1: Find Where to Watch a Film
 # ==============================================================================
 
+
 @cli.command()
 @click.argument("title", required=False)
 @click.option("--year", "-y", type=int, help="Release year")
@@ -114,6 +115,7 @@ def watch(title, year, force):
     # Parse title/year if in format "Title (Year)"
     if not year and "(" in title and title.endswith(")"):
         import re
+
         match = re.match(r"^(.+?)\s*\((\d{4})\)$", title.strip())
         if match:
             title = match.group(1).strip()
@@ -149,7 +151,9 @@ def watch(title, year, force):
                         click.secho("📊 Data freshly fetched from TMDB", fg="green")
                     else:
                         days = age.days
-                        click.echo(f"📊 Using cached data ({days} day{'s' if days != 1 else ''} old)")
+                        click.echo(
+                            f"📊 Using cached data ({days} day{'s' if days != 1 else ''} old)"
+                        )
 
                 # Analyze with watch strategy
                 analyzer = WatchStrategyAnalyzer(config.SUBSCRIPTION_PROFILE)
@@ -163,7 +167,7 @@ def watch(title, year, force):
                     click.secho(
                         f"\n📅 Note: Year mismatch - "
                         f"Letterboxd: {film.letterboxd_year}, TMDB: {film.tmdb_year}",
-                        fg="yellow"
+                        fg="yellow",
                     )
 
     except KeyboardInterrupt:
@@ -174,6 +178,7 @@ def watch(title, year, force):
         click.echo("\nFor more details, run with LOG_LEVEL=DEBUG in your .env file")
         if config.LOG_LEVEL == "DEBUG":
             import traceback
+
             click.echo("\nFull traceback:")
             click.echo(traceback.format_exc())
         sys.exit(1)
@@ -183,8 +188,14 @@ def watch(title, year, force):
 # USE CASE 2: Scrape Letterboxd Watchlist
 # ==============================================================================
 
+
 @cli.command()
-@click.option("--method", "-m", type=click.Choice(["html", "csv"]), help="Scraping method (overrides config)")
+@click.option(
+    "--method",
+    "-m",
+    type=click.Choice(["html", "csv"]),
+    help="Scraping method (overrides config)",
+)
 @click.option("--csv-file", "-c", type=click.Path(exists=True), help="Path to CSV export file")
 @click.option("--save-json/--no-save-json", default=True, help="Save result to JSON")
 def sync(method, csv_file, save_json):
@@ -260,9 +271,7 @@ def sync(method, csv_file, save_json):
                 with click.progressbar(result.films, label="Importing") as films:
                     for film_data in films:
                         film, created = get_or_create_film(
-                            session,
-                            film_data.film_title,
-                            film_data.year
+                            session, film_data.film_title, film_data.year
                         )
 
                         if created:
@@ -272,7 +281,7 @@ def sync(method, csv_file, save_json):
 
                 session.commit()
 
-            click.secho(f"\n✅ Database updated:", fg="green", bold=True)
+            click.secho("\n✅ Database updated:", fg="green", bold=True)
             click.echo(f"  • Added: {added} new films")
             click.echo(f"  • Existing: {existing} films")
 
@@ -283,9 +292,11 @@ def sync(method, csv_file, save_json):
 
             # Show stats
             films_with_year = sum(1 for f in result.films if f.year is not None)
-            year_percentage = (films_with_year / result.film_count * 100) if result.film_count > 0 else 0
+            year_percentage = (
+                (films_with_year / result.film_count * 100) if result.film_count > 0 else 0
+            )
 
-            click.echo(f"\n📊 Statistics:")
+            click.echo("\n📊 Statistics:")
             click.echo(f"  • Films with year: {films_with_year} ({year_percentage:.1f}%)")
 
             if result.source == "html":
@@ -299,6 +310,7 @@ def sync(method, csv_file, save_json):
         click.echo("\nFor more details, run with LOG_LEVEL=DEBUG in your .env file")
         if config.LOG_LEVEL == "DEBUG":
             import traceback
+
             click.echo("\nFull traceback:")
             click.echo(traceback.format_exc())
         sys.exit(1)
@@ -307,6 +319,7 @@ def sync(method, csv_file, save_json):
 # ==============================================================================
 # USE CASE 3 & 4: Database Management
 # ==============================================================================
+
 
 @cli.group()
 def db():
@@ -332,7 +345,7 @@ def init(reset):
 
     # Show info
     info = get_database_info()
-    click.echo(f"\n📊 Database Information:")
+    click.echo("\n📊 Database Information:")
     click.echo(f"  • Location: {info['path']}")
     click.echo(f"  • Status: {'Exists' if info['exists'] else 'Created'}")
 
@@ -430,7 +443,7 @@ def import_json(path, import_all):
         click.echo(f"  ✅ Imported: {imported}, ⏭️  Skipped: {skipped}\n")
 
     # Summary
-    click.secho(f"✅ Migration complete!", fg="green", bold=True)
+    click.secho("✅ Migration complete!", fg="green", bold=True)
     click.echo(f"  • Files processed: {len(json_files)}")
     click.echo(f"  • Films imported: {total_imported}")
     click.echo(f"  • Films skipped: {total_skipped}")
@@ -439,6 +452,7 @@ def import_json(path, import_all):
 # ==============================================================================
 # USE CASE 5: Search & Query Films
 # ==============================================================================
+
 
 @cli.command()
 @click.argument("query")
@@ -471,17 +485,20 @@ def search(query, limit):
             if film.tmdb_id:
                 click.echo(f"   TMDB ID: {film.tmdb_id} | Match: {film.match_confidence}")
                 if film.year_mismatch:
-                    click.secho(f"   ⚠️  Year mismatch: Letterboxd={film.letterboxd_year}, TMDB={film.tmdb_year}", fg="yellow")
+                    click.secho(
+                        f"   ⚠️  Year mismatch: Letterboxd={film.letterboxd_year}, TMDB={film.tmdb_year}",
+                        fg="yellow",
+                    )
             else:
                 click.secho("   ⚠️  Not enriched yet", fg="yellow")
 
             # Status
             if film.watched:
-                click.secho(f"   ✓ Watched", fg="green")
+                click.secho("   ✓ Watched", fg="green")
                 if film.watched_at:
                     click.echo(f"     on {film.watched_at.strftime('%Y-%m-%d')}")
             else:
-                click.echo(f"   ☐ Unwatched")
+                click.echo("   ☐ Unwatched")
 
             # Streaming offers count
             if film.streaming_offers:
@@ -498,7 +515,13 @@ def search(query, limit):
 @cli.command()
 @click.option("--provider", "-p", required=True, help="Provider name (e.g., Netflix)")
 @click.option("--country", "-c", help="Country code (e.g., FR, US)")
-@click.option("--type", "-t", "offer_type", type=click.Choice(["flatrate", "rent", "buy", "free", "ads"]), help="Monetization type")
+@click.option(
+    "--type",
+    "-t",
+    "offer_type",
+    type=click.Choice(["flatrate", "rent", "buy", "free", "ads"]),
+    help="Monetization type",
+)
 @click.option("--limit", "-l", type=int, help="Maximum results to show")
 def providers(provider, country, offer_type, limit):
     """
@@ -517,7 +540,7 @@ def providers(provider, country, offer_type, limit):
             session,
             provider_name=provider,
             country_code=country,
-            monetization_type=offer_type
+            monetization_type=offer_type,
         )
 
         if not films:
@@ -554,7 +577,13 @@ def providers(provider, country, offer_type, limit):
 
 @cli.command()
 @click.option("--country", "-c", required=True, help="Country code (e.g., FR, US)")
-@click.option("--type", "-t", "offer_type", type=click.Choice(["flatrate", "rent", "buy", "free", "ads"]), help="Monetization type")
+@click.option(
+    "--type",
+    "-t",
+    "offer_type",
+    type=click.Choice(["flatrate", "rent", "buy", "free", "ads"]),
+    help="Monetization type",
+)
 def country(country, offer_type):
     """
     List films available in a specific country.
@@ -589,6 +618,7 @@ def country(country, offer_type):
 # USE CASE 6: Track Watched Status
 # ==============================================================================
 
+
 @cli.command()
 @click.option("--list", "show_list", is_flag=True, help="Show watchlist")
 @click.option("--count", is_flag=True, help="Show count only")
@@ -621,7 +651,11 @@ def watchlist(show_list, count):
 
             # Show if enriched
             if not film.tmdb_id:
-                click.secho(f"     ⚠️  Not enriched yet - run: screenseeker watch \"{film.full_title}\"", fg="yellow", dim=True)
+                click.secho(
+                    f'     ⚠️  Not enriched yet - run: screenseeker watch "{film.full_title}"',
+                    fg="yellow",
+                    dim=True,
+                )
 
 
 @cli.command()
@@ -645,11 +679,11 @@ def watched(title, year, unwatch):
 
         if not film:
             click.secho(f"❌ Film not found: {title} ({year or 'any year'})", fg="red")
-            click.echo(f"\n💡 Suggestions:")
-            click.echo(f"   • Try searching: screenseeker search \"{title}\"")
-            click.echo(f"   • Or enrich it first: screenseeker watch \"{title}\"")
+            click.echo("\n💡 Suggestions:")
+            click.echo(f'   • Try searching: screenseeker search "{title}"')
+            click.echo(f'   • Or enrich it first: screenseeker watch "{title}"')
             if not year:
-                click.echo(f"   • Try adding the year: screenseeker watched \"{title}\" --year YYYY")
+                click.echo(f'   • Try adding the year: screenseeker watched "{title}" --year YYYY')
             sys.exit(1)
 
         # Mark watched/unwatched
@@ -665,6 +699,7 @@ def watched(title, year, unwatch):
 # ==============================================================================
 # USE CASE 7: Batch Operations
 # ==============================================================================
+
 
 @cli.command()
 @click.option("--days", "-d", default=7, help="Consider films stale after N days")
@@ -704,11 +739,15 @@ def refresh(days, limit, dry_run):
         click.echo(f"\n🔄 Found {len(stale_films)} film(s) to refresh:\n")
 
         for film in stale_films:
-            age_str = "never checked" if not film.last_checked else f"{(datetime.utcnow() - film.last_checked).days} days old"
+            age_str = (
+                "never checked"
+                if not film.last_checked
+                else f"{(datetime.utcnow() - film.last_checked).days} days old"
+            )
             click.echo(f"  • {film.full_title} ({age_str})")
 
         if dry_run:
-            click.echo(f"\n(Dry run - no changes made)")
+            click.echo("\n(Dry run - no changes made)")
             return
 
         if not click.confirm(f"\nRefresh {len(stale_films)} film(s)?"):
@@ -731,7 +770,7 @@ def refresh(days, limit, dry_run):
                             enricher,
                             film.letterboxd_title,
                             film.letterboxd_year,
-                            force_refresh=True
+                            force_refresh=True,
                         )
                     except Exception as e:
                         click.echo(f"\n⚠️  Error refreshing {film.full_title}: {e}")
@@ -741,8 +780,18 @@ def refresh(days, limit, dry_run):
 
 @cli.command()
 @click.option("--limit", "-l", type=int, help="Maximum films to enrich")
-@click.option("--unenriched-only", is_flag=True, default=True, help="Only enrich films without TMDB data (default)")
-@click.option("--all", "enrich_all", is_flag=True, help="Enrich all films (including already enriched)")
+@click.option(
+    "--unenriched-only",
+    is_flag=True,
+    default=True,
+    help="Only enrich films without TMDB data (default)",
+)
+@click.option(
+    "--all",
+    "enrich_all",
+    is_flag=True,
+    help="Enrich all films (including already enriched)",
+)
 @click.option("--dry-run", is_flag=True, help="Show what would be enriched without doing it")
 def enrich(limit, unenriched_only, enrich_all, dry_run):
     """
@@ -775,7 +824,7 @@ def enrich(limit, unenriched_only, enrich_all, dry_run):
             films_to_enrich = session.query(Film).all()
             mode = "all"
         else:
-            films_to_enrich = session.query(Film).filter(Film.tmdb_id == None).all()
+            films_to_enrich = session.query(Film).filter(Film.tmdb_id.is_(None)).all()
             mode = "unenriched"
 
         if not films_to_enrich:
@@ -799,7 +848,7 @@ def enrich(limit, unenriched_only, enrich_all, dry_run):
             click.echo()
 
         # Show preview
-        click.echo(f"Films to enrich:\n")
+        click.echo("Films to enrich:\n")
         for i, film in enumerate(films_to_enrich[:10], 1):
             click.echo(f"  {i:3}. {film.full_title}")
 
@@ -807,7 +856,7 @@ def enrich(limit, unenriched_only, enrich_all, dry_run):
             click.echo(f"  ... and {len(films_to_enrich) - 10} more")
 
         if dry_run:
-            click.echo(f"\n(Dry run - no changes made)")
+            click.echo("\n(Dry run - no changes made)")
             return
 
         click.echo()
@@ -835,7 +884,7 @@ def enrich(limit, unenriched_only, enrich_all, dry_run):
                             enricher,
                             film.letterboxd_title,
                             film.letterboxd_year,
-                            force_refresh=enrich_all  # Force if enriching all
+                            force_refresh=enrich_all,  # Force if enriching all
                         )
                         success_count += 1
                     except Exception as e:
@@ -865,6 +914,7 @@ def enrich(limit, unenriched_only, enrich_all, dry_run):
 # ==============================================================================
 # USE CASE 8: Reports & Statistics
 # ==============================================================================
+
 
 @cli.command()
 @click.option("--provider", "-p", multiple=True, help="Providers to check (can specify multiple)")
@@ -905,7 +955,7 @@ def report(provider):
                 session,
                 provider_name=provider_name,
                 country_code=base_country,
-                monetization_type="flatrate"
+                monetization_type="flatrate",
             )
 
             click.secho(f"📺 {provider_name}", fg="cyan", bold=True)
@@ -927,6 +977,7 @@ def report(provider):
 # Helper Functions
 # ==============================================================================
 
+
 def _display_watch_strategy(result, strategy):
     """Display personalized watch strategy."""
     click.echo("\n" + "=" * 80)
@@ -947,22 +998,28 @@ def _display_watch_strategy(result, strategy):
 
     # TMDB match
     movie = result.tmdb_movie
-    confidence_emoji = {"exact": "🎯", "high": "✅", "medium": "⚠️", "low": "❓"}.get(result.match_confidence, "❓")
+    confidence_emoji = {"exact": "🎯", "high": "✅", "medium": "⚠️", "low": "❓"}.get(
+        result.match_confidence, "❓"
+    )
 
-    click.echo(f"{confidence_emoji} TMDB Match: {movie.title} ({movie.year or 'N/A'}) - Confidence: {result.match_confidence}")
+    click.echo(
+        f"{confidence_emoji} TMDB Match: {movie.title} ({movie.year or 'N/A'}) - Confidence: {result.match_confidence}"
+    )
     if movie.vote_average:
         click.echo(f"   ⭐ Rating: {movie.vote_average}/10")
 
     # Check if any watching options available
     if not strategy.has_any_option():
         click.secho("\n❌ NOT AVAILABLE on your subscriptions", fg="red", bold=True)
-        click.echo(f"   Available globally in {result.total_countries} countries on {result.total_providers} providers")
+        click.echo(
+            f"   Available globally in {result.total_countries} countries on {result.total_providers} providers"
+        )
         click.echo("=" * 80)
         return
 
     # Best option (no VPN needed)
     if strategy.best_option:
-        click.secho(f"\n✅ WATCH NOW (No VPN needed):", fg="green", bold=True)
+        click.secho("\n✅ WATCH NOW (No VPN needed):", fg="green", bold=True)
         opt = strategy.best_option
         if opt.via_bundle:
             click.echo(f"   🇫🇷 {opt.provider} (via {opt.via_bundle}) - {opt.country_name}")
@@ -971,18 +1028,24 @@ def _display_watch_strategy(result, strategy):
 
     # VPN options
     if strategy.vpn_options:
-        click.secho(f"\n🌍 VPN OPTIONS:", fg="blue", bold=True)
+        click.secho("\n🌍 VPN OPTIONS:", fg="blue", bold=True)
         for opt in strategy.vpn_options:
             if opt.via_bundle:
-                click.echo(f"   {opt.provider} (via {opt.via_bundle}) - Connect to {opt.country_name}")
+                click.echo(
+                    f"   {opt.provider} (via {opt.via_bundle}) - Connect to {opt.country_name}"
+                )
             else:
                 click.echo(f"   {opt.provider} - Connect to {opt.country_name}")
 
     # Rent/Buy alternatives
     if strategy.base_country_alternatives:
-        click.secho(f"\n💰 RENT/BUY:", fg="yellow", bold=True)
-        rent_providers = [opt.provider for opt in strategy.base_country_alternatives if opt.offer_type == "rent"]
-        buy_providers = [opt.provider for opt in strategy.base_country_alternatives if opt.offer_type == "buy"]
+        click.secho("\n💰 RENT/BUY:", fg="yellow", bold=True)
+        rent_providers = [
+            opt.provider for opt in strategy.base_country_alternatives if opt.offer_type == "rent"
+        ]
+        buy_providers = [
+            opt.provider for opt in strategy.base_country_alternatives if opt.offer_type == "buy"
+        ]
 
         if rent_providers:
             click.echo(f"   Rent: {', '.join(rent_providers)}")
@@ -990,7 +1053,7 @@ def _display_watch_strategy(result, strategy):
             click.echo(f"   Buy: {', '.join(buy_providers)}")
 
     # Summary
-    click.echo(f"\n📊 Summary:")
+    click.echo("\n📊 Summary:")
     click.echo(f"   Global: {result.total_countries} countries, {result.total_providers} providers")
     click.echo(f"   Your subscriptions: {len(strategy.all_owned_options)} options")
 

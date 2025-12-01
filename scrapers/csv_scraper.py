@@ -67,9 +67,7 @@ class CSVScraper(BaseScraper):
 
                 # Parse each row
                 row_count = 0
-                for row_num, row in enumerate(
-                    reader, start=2
-                ):  # start=2 because row 1 is header
+                for row_num, row in enumerate(reader, start=2):  # start=2 because row 1 is header
                     row_count += 1
 
                     try:
@@ -80,9 +78,7 @@ class CSVScraper(BaseScraper):
 
                         # Skip empty rows
                         if not name:
-                            self.logger.warning(
-                                f"Row {row_num}: Missing name, skipping"
-                            )
+                            self.logger.warning(f"Row {row_num}: Missing name, skipping")
                             continue
 
                         # Parse year
@@ -97,9 +93,7 @@ class CSVScraper(BaseScraper):
 
                         # Build full title
                         film_title = name
-                        film_full_title = (
-                            f"{film_title} ({year})" if year else film_title
-                        )
+                        film_full_title = f"{film_title} ({year})" if year else film_title
 
                         # Create Film instance
                         film = Film(

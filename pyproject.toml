@@ -30,3 +30,62 @@ screenseeker = "cli:cli"
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.mypy]
+python_version = "3.14"
+warn_return_any = false
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+check_untyped_defs = false
+no_implicit_optional = false
+strict_optional = false
+warn_no_return = false
+exclude = [
+    "^tests/",
+    "^.venv/",
+]
+
+# Disable specific checks that are too strict for this codebase
+[[tool.mypy.overrides]]
+module = [
+    "database.*",
+    "enrichers.*",
+    "scrapers.*",
+    "cli",
+    "logger",
+]
+ignore_errors = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "*.pyc",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "C",  # flake8-comprehensions
+    "B",  # flake8-bugbear
+]
+ignore = [
+    "E501",  # line too long, handled by formatter
+    "C901",  # function is too complex (we'll handle refactoring later)
+]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+skip_gitignore = true
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]
+skips = ["B101"]  # Skip assert_used check (used in tests)

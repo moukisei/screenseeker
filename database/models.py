@@ -10,12 +10,12 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
-    Index,
 )
-from sqlalchemy.orm import DeclarativeBase, relationship, Mapped
+from sqlalchemy.orm import DeclarativeBase, Mapped, relationship
 
 
 class Base(DeclarativeBase):
@@ -42,9 +42,7 @@ class Film(Base):
     letterboxd_year: Mapped[Optional[int]] = Column(Integer, nullable=True)
 
     # TMDB data (after enrichment) - canonical source of truth
-    tmdb_id: Mapped[Optional[int]] = Column(
-        Integer, nullable=True, unique=True, index=True
-    )
+    tmdb_id: Mapped[Optional[int]] = Column(Integer, nullable=True, unique=True, index=True)
     tmdb_title: Mapped[Optional[str]] = Column(String, nullable=True)
     tmdb_year: Mapped[Optional[int]] = Column(Integer, nullable=True)
     tmdb_release_date: Mapped[Optional[str]] = Column(
@@ -55,14 +53,10 @@ class Film(Base):
     match_confidence: Mapped[Optional[str]] = Column(
         String, nullable=True
     )  # exact/high/medium/low/none
-    year_mismatch: Mapped[bool] = Column(
-        Boolean, default=False
-    )  # Flag for year discrepancies
+    year_mismatch: Mapped[bool] = Column(Boolean, default=False)  # Flag for year discrepancies
 
     # Watchlist metadata
-    date_added: Mapped[datetime] = Column(
-        DateTime, nullable=False
-    )  # When added to watchlist
+    date_added: Mapped[datetime] = Column(DateTime, nullable=False)  # When added to watchlist
     watched: Mapped[bool] = Column(Boolean, default=False)  # Track if watched
     watched_at: Mapped[Optional[datetime]] = Column(DateTime, nullable=True)
     notes: Mapped[Optional[str]] = Column(Text, nullable=True)  # Personal notes
@@ -73,9 +67,7 @@ class Film(Base):
     )  # When streaming data was last fetched
 
     # Timestamps
-    created_at: Mapped[datetime] = Column(
-        DateTime, nullable=False, default=datetime.utcnow
-    )
+    created_at: Mapped[datetime] = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[Optional[datetime]] = Column(
         DateTime, nullable=True, onupdate=datetime.utcnow
     )
@@ -127,15 +119,11 @@ class StreamingOffer(Base):
     )
 
     # Streaming offer details
-    country_code: Mapped[str] = Column(
-        String(2), nullable=False
-    )  # ISO 3166-1 alpha-2
+    country_code: Mapped[str] = Column(String(2), nullable=False)  # ISO 3166-1 alpha-2
     country_name: Mapped[str] = Column(String, nullable=False)
     provider_id: Mapped[int] = Column(Integer, nullable=False)  # TMDB provider ID
     provider_name: Mapped[str] = Column(String, nullable=False, index=True)
-    monetization_type: Mapped[str] = Column(
-        String, nullable=False
-    )  # flatrate/rent/buy/free/ads
+    monetization_type: Mapped[str] = Column(String, nullable=False)  # flatrate/rent/buy/free/ads
 
     # Optional fields
     streaming_url: Mapped[Optional[str]] = Column(Text, nullable=True)
@@ -143,14 +131,10 @@ class StreamingOffer(Base):
     display_priority: Mapped[Optional[int]] = Column(Integer, nullable=True)
 
     # Cache metadata
-    checked_at: Mapped[datetime] = Column(
-        DateTime, nullable=False
-    )  # When this offer was verified
+    checked_at: Mapped[datetime] = Column(DateTime, nullable=False)  # When this offer was verified
 
     # Timestamps
-    created_at: Mapped[datetime] = Column(
-        DateTime, nullable=False, default=datetime.utcnow
-    )
+    created_at: Mapped[datetime] = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     # Relationships
     film: Mapped["Film"] = relationship("Film", back_populates="streaming_offers")
@@ -164,6 +148,10 @@ class StreamingOffer(Base):
 
 
 # Indexes for common query patterns
-Index("idx_offers_country_provider", StreamingOffer.country_code, StreamingOffer.provider_name)
+Index(
+    "idx_offers_country_provider",
+    StreamingOffer.country_code,
+    StreamingOffer.provider_name,
+)
 Index("idx_offers_checked_at", StreamingOffer.checked_at)
 Index("idx_films_title_year", Film.letterboxd_title, Film.letterboxd_year)

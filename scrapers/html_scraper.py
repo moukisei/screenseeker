@@ -38,16 +38,12 @@ class HTMLScraper(BaseScraper):
         self.timeout = timeout
         self.session = requests.Session()
         self.session.headers.update(
-            {
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-            }
+            {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
         )
 
         # Create output directory if saving raw HTML
         if self.save_raw_data:
-            self.html_dir = (
-                self.output_dir / "raw_html" / datetime.now().strftime("%Y%m%d_%H%M%S")
-            )
+            self.html_dir = self.output_dir / "raw_html" / datetime.now().strftime("%Y%m%d_%H%M%S")
             self.html_dir.mkdir(parents=True, exist_ok=True)
             self.logger.info(f"Raw HTML will be saved to {self.html_dir}")
 
@@ -86,9 +82,7 @@ class HTMLScraper(BaseScraper):
 
                 # If no films found on the page, stop
                 if not grid_items:
-                    self.logger.info(
-                        f"No films found on page {page}. Stopping pagination."
-                    )
+                    self.logger.info(f"No films found on page {page}. Stopping pagination.")
                     break
 
                 # Extract films from grid items

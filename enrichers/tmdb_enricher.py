@@ -2,12 +2,15 @@ import time
 from typing import Optional
 
 import requests
-from tenacity import (retry, retry_if_exception_type, stop_after_attempt,
-                      wait_exponential)
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from enrichers.base import BaseEnricher
-from enrichers.enrichment_models import (EnrichmentResult, StreamingOffer,
-                                         TMDBMovieInfo)
+from enrichers.enrichment_models import EnrichmentResult, StreamingOffer, TMDBMovieInfo
 
 
 class TMDBEnricher(BaseEnricher):
@@ -62,9 +65,7 @@ class TMDBEnricher(BaseEnricher):
         "ads": "Free with Ads",
     }
 
-    def __init__(
-        self, api_key: str, rate_limit_per_second: float = 5.0, language: str = "en-US"
-    ):
+    def __init__(self, api_key: str, rate_limit_per_second: float = 5.0, language: str = "en-US"):
         """
         Initialize TMDB enricher.
 
@@ -81,9 +82,7 @@ class TMDBEnricher(BaseEnricher):
         self.api_key = api_key
         self.base_url = "https://api.themoviedb.org/3"
         self.language = language
-        self.rate_limit_delay = (
-            1.0 / rate_limit_per_second
-        )  # Convert to delay between requests
+        self.rate_limit_delay = 1.0 / rate_limit_per_second  # Convert to delay between requests
         self.last_request_time = 0.0
 
         self.session = requests.Session()
@@ -91,9 +90,7 @@ class TMDBEnricher(BaseEnricher):
             {"Accept": "application/json", "User-Agent": "ScreenSeeker/1.0"}
         )
 
-        self.logger.info(
-            f"TMDB enricher initialized (rate limit: {rate_limit_per_second} req/s)"
-        )
+        self.logger.info(f"TMDB enricher initialized (rate limit: {rate_limit_per_second} req/s)")
 
     def _rate_limit(self):
         """Enforce rate limiting between requests."""
@@ -175,9 +172,7 @@ class TMDBEnricher(BaseEnricher):
             self.logger.error(f"TMDB search failed for '{title}': {e}")
             return None
 
-    def _search_movie_fuzzy_year(
-        self, title: str, year: Optional[int] = None
-    ) -> Optional[dict]:
+    def _search_movie_fuzzy_year(self, title: str, year: Optional[int] = None) -> Optional[dict]:
         """
         Search for a movie on TMDB with fuzzy year matching (±1 year).
 
@@ -204,22 +199,18 @@ class TMDBEnricher(BaseEnricher):
             self.logger.debug(f"No exact match, trying year+1: {year + 1}")
             result = self._search_movie(title, year + 1)
             if result:
-                self.logger.info(
-                    f"Found match with year+1: {year + 1} instead of {year}"
-                )
+                self.logger.info(f"Found match with year+1: {year + 1} instead of {year}")
                 return result
 
             # Try year - 1 (less common but happens with festival premieres)
             self.logger.debug(f"No match with year+1, trying year-1: {year - 1}")
             result = self._search_movie(title, year - 1)
             if result:
-                self.logger.info(
-                    f"Found match with year-1: {year - 1} instead of {year}"
-                )
+                self.logger.info(f"Found match with year-1: {year - 1} instead of {year}")
                 return result
 
             # Fall back to search without year
-            self.logger.debug(f"No match with year±1, trying without year constraint")
+            self.logger.debug("No match with year±1, trying without year constraint")
 
         # Search without year constraint
         result = self._search_movie(title, None)
@@ -229,9 +220,7 @@ class TMDBEnricher(BaseEnricher):
                 tmdb_year = int(tmdb_year_str)
                 year_diff = abs(tmdb_year - year)
                 if year_diff > 1:
-                    self.logger.warning(
-                        f"Year mismatch > 1: Letterboxd={year}, TMDB={tmdb_year}"
-                    )
+                    self.logger.warning(f"Year mismatch > 1: Letterboxd={year}, TMDB={tmdb_year}")
 
         return result
 
@@ -250,9 +239,7 @@ class TMDBEnricher(BaseEnricher):
             return data.get("results", {})
 
         except requests.RequestException as e:
-            self.logger.error(
-                f"Failed to get watch providers for movie {movie_id}: {e}"
-            )
+            self.logger.error(f"Failed to get watch providers for movie {movie_id}: {e}")
             return {}
 
     def _calculate_match_confidence(
@@ -295,9 +282,7 @@ class TMDBEnricher(BaseEnricher):
     def _parse_tmdb_movie(self, movie_data: dict) -> TMDBMovieInfo:
         """Parse TMDB movie data into TMDBMovieInfo model."""
         release_date = movie_data.get("release_date") or ""
-        year = (
-            int(release_date[:4]) if release_date and len(release_date) >= 4 else None
-        )
+        year = int(release_date[:4]) if release_date and len(release_date) >= 4 else None
 
         return TMDBMovieInfo(
             tmdb_id=movie_data["id"],
@@ -313,9 +298,7 @@ class TMDBEnricher(BaseEnricher):
             popularity=movie_data.get("popularity"),
         )
 
-    def _parse_streaming_offers(
-        self, providers_by_country: dict
-    ) -> list[StreamingOffer]:
+    def _parse_streaming_offers(self, providers_by_country: dict) -> list[StreamingOffer]:
         """
         Parse TMDB watch providers data into StreamingOffer objects.
 
@@ -351,7 +334,9 @@ class TMDBEnricher(BaseEnricher):
         )
         return offers
 
-    def enrich(self, title: str, year: Optional[int] = None, fuzzy_year: bool = True) -> EnrichmentResult:
+    def enrich(
+        self, title: str, year: Optional[int] = None, fuzzy_year: bool = True
+    ) -> EnrichmentResult:
         """
         Enrich a film with TMDB streaming availability data.
 
@@ -394,12 +379,8 @@ class TMDBEnricher(BaseEnricher):
             streaming_offers = self._parse_streaming_offers(providers_data)
 
             # Calculate statistics
-            unique_countries = len(
-                set(offer.country_code for offer in streaming_offers)
-            )
-            unique_providers = len(
-                set(offer.provider_name for offer in streaming_offers)
-            )
+            unique_countries = len({offer.country_code for offer in streaming_offers})
+            unique_providers = len({offer.provider_name for offer in streaming_offers})
 
             result = EnrichmentResult(
                 query_title=title,

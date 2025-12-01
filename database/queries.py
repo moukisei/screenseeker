@@ -7,7 +7,7 @@ Provides convenient functions for common database operations.
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from sqlalchemy import and_, func, or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from database.models import Film, StreamingOffer
@@ -156,12 +156,10 @@ def get_unwatched_films(session: Session) -> List[Film]:
     Returns:
         List of unwatched films
     """
-    return session.query(Film).filter(Film.watched == False).all()
+    return session.query(Film).filter(~Film.watched).all()
 
 
-def mark_film_watched(
-    session: Session, film_id: int, watched: bool = True
-) -> Optional[Film]:
+def mark_film_watched(session: Session, film_id: int, watched: bool = True) -> Optional[Film]:
     """
     Mark a film as watched or unwatched.
 
@@ -232,9 +230,7 @@ def get_films_by_country(
         List of films
     """
     query = (
-        session.query(Film)
-        .join(StreamingOffer)
-        .filter(StreamingOffer.country_code == country_code)
+        session.query(Film).join(StreamingOffer).filter(StreamingOffer.country_code == country_code)
     )
 
     if monetization_type:
@@ -276,18 +272,17 @@ def delete_streaming_offers(session: Session, film_id: int) -> int:
     Returns:
         Number of offers deleted
     """
-    count = (
-        session.query(StreamingOffer)
-        .filter(StreamingOffer.film_id == film_id)
-        .delete()
-    )
+    count = session.query(StreamingOffer).filter(StreamingOffer.film_id == film_id).delete()
 
     logger.debug(f"Deleted {count} streaming offers for film ID {film_id}")
     return count
 
 
 def save_streaming_offers(
-    session: Session, film_id: int, offers: List[dict], checked_at: Optional[datetime] = None
+    session: Session,
+    film_id: int,
+    offers: List[dict],
+    checked_at: Optional[datetime] = None,
 ) -> int:
     """
     Save streaming offers for a film.
@@ -342,7 +337,7 @@ def get_database_stats(session: Session) -> dict:
         Dictionary with statistics
     """
     total_films = session.query(Film).count()
-    watched_films = session.query(Film).filter(Film.watched == True).count()
+    watched_films = session.query(Film).filter(Film.watched).count()
     unwatched_films = total_films - watched_films
 
     films_with_tmdb = session.query(Film).filter(Film.tmdb_id.isnot(None)).count()
@@ -350,14 +345,10 @@ def get_database_stats(session: Session) -> dict:
 
     # Get unique providers and countries
     unique_providers = (
-        session.query(func.count(func.distinct(StreamingOffer.provider_name)))
-        .scalar()
-        or 0
+        session.query(func.count(func.distinct(StreamingOffer.provider_name))).scalar() or 0
     )
     unique_countries = (
-        session.query(func.count(func.distinct(StreamingOffer.country_code)))
-        .scalar()
-        or 0
+        session.query(func.count(func.distinct(StreamingOffer.country_code))).scalar() or 0
     )
 
     # Get films that need refresh (stale)

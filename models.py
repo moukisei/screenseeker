@@ -14,9 +14,7 @@ class Film(BaseModel):
     """Represents a film entry from Letterboxd."""
 
     film_id: str = Field(default="", description="Unique auto-generated identifier")
-    film_full_title: str = Field(
-        ..., description="Full display name of the film with year"
-    )
+    film_full_title: str = Field(..., description="Full display name of the film with year")
     film_title: str = Field(..., description="Film title without year")
     year: Optional[int] = Field(None, description="Release year of the film")
     date_added: str = Field(..., description="Date added to watchlist")
@@ -106,16 +104,12 @@ class ScrapingResult(BaseModel):
     """Represents the result of a scraping operation."""
 
     films: list[Film] = Field(default_factory=list, description="List of scraped films")
-    total_pages_scraped: int = Field(
-        default=0, ge=0, description="Number of pages scraped"
-    )
+    total_pages_scraped: int = Field(default=0, ge=0, description="Number of pages scraped")
     success: bool = Field(default=True, description="Whether scraping was successful")
     error_message: Optional[str] = Field(
         default=None, description="Error message if scraping failed"
     )
-    source: str = Field(
-        default="unknown", description="Source of the data (html, csv, etc.)"
-    )
+    source: str = Field(default="unknown", description="Source of the data (html, csv, etc.)")
 
     @property
     def film_count(self) -> int:
