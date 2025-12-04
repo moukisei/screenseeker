@@ -4,7 +4,7 @@ Database service layer for enrichment workflow.
 Handles the integration between TMDB enrichment and database persistence.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -125,8 +125,8 @@ def create_film_from_enrichment(
         tmdb_release_date=tmdb_movie.release_date,
         match_confidence=enrichment.match_confidence,
         year_mismatch=year_mismatch,
-        date_added=datetime.utcnow(),
-        last_checked=datetime.utcnow(),
+        date_added=datetime.now(UTC),
+        last_checked=datetime.now(UTC),
     )
 
     session.add(film)
@@ -186,7 +186,7 @@ def update_film_from_enrichment(session: Session, film: Film, enrichment: Enrich
             )
             # Mark as low confidence to indicate potential duplicate
             film.match_confidence = "duplicate"
-            film.last_checked = datetime.utcnow()
+            film.last_checked = datetime.now(UTC)
             session.flush()
             return film
 
@@ -196,7 +196,7 @@ def update_film_from_enrichment(session: Session, film: Film, enrichment: Enrich
     film.tmdb_year = tmdb_movie.year
     film.tmdb_release_date = tmdb_movie.release_date
     film.match_confidence = enrichment.match_confidence
-    film.last_checked = datetime.utcnow()
+    film.last_checked = datetime.now(UTC)
 
     # Check for year mismatch
     if film.letterboxd_year and tmdb_movie.year:
@@ -241,10 +241,14 @@ def needs_refresh(film: Film, days: int = 7) -> bool:
     if film.last_checked is None:
         return True
 
-    from datetime import timedelta
+    stale_date = datetime.now(UTC) - timedelta(days=days)
 
-    stale_date = datetime.utcnow() - timedelta(days=days)
-    return film.last_checked < stale_date
+    # Ensure last_checked is timezone-aware for comparison
+    last_checked = film.last_checked
+    if last_checked.tzinfo is None:
+        last_checked = last_checked.replace(tzinfo=UTC)
+
+    return last_checked < stale_date
 
 
 def get_film_with_offers(

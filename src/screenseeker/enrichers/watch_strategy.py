@@ -1,7 +1,7 @@
 from difflib import SequenceMatcher
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from screenseeker.logger import get_logger
 
@@ -13,6 +13,8 @@ logger = get_logger(__name__)
 class WatchOption(BaseModel):
     """Represents a single way to watch a film."""
 
+    model_config = ConfigDict(frozen=True)
+
     provider: str = Field(..., description="Provider name")
     country_code: str = Field(..., description="Country code (e.g., 'US')")
     country_name: str = Field(..., description="Country name")
@@ -20,9 +22,6 @@ class WatchOption(BaseModel):
     offer_type: str = Field(..., description="Offer type: flatrate, rent, buy, etc.")
     priority_score: int = Field(..., description="Priority score (lower is better)")
     via_bundle: Optional[str] = Field(None, description="If accessed via bundle (e.g., 'Canal+')")
-
-    class Config:
-        frozen = True
 
 
 class WatchStrategy(BaseModel):

@@ -87,6 +87,7 @@ select = [
 ignore = [
     "E501",  # line too long, handled by formatter
     "C901",  # function is too complex (we'll handle refactoring later)
+    "I001",  # import sorting, handled by isort
 ]
 
 [tool.isort]

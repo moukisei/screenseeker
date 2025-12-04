@@ -21,7 +21,7 @@ and tracking what you've watched.
 """
 
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import click
@@ -146,7 +146,7 @@ def watch(title, year, force):
 
                 # Log cache info
                 if film.last_checked:
-                    age = datetime.utcnow() - film.last_checked
+                    age = datetime.now(UTC) - film.last_checked
                     if age.total_seconds() < 60:
                         click.secho("📊 Data freshly fetched from TMDB", fg="green")
                     else:
@@ -505,7 +505,7 @@ def search(query, limit):
                 click.echo(f"   📊 {len(film.streaming_offers)} streaming offers")
 
                 if film.last_checked:
-                    age = datetime.utcnow() - film.last_checked
+                    age = datetime.now(UTC) - film.last_checked
                     if age.days > 7:
                         click.secho(f"   ⚠️  Data is {age.days} days old", fg="yellow")
 
@@ -742,7 +742,7 @@ def refresh(days, limit, dry_run):
             age_str = (
                 "never checked"
                 if not film.last_checked
-                else f"{(datetime.utcnow() - film.last_checked).days} days old"
+                else f"{(datetime.now(UTC) - film.last_checked).days} days old"
             )
             click.echo(f"  • {film.full_title} ({age_str})")
 

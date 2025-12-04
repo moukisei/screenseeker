@@ -1,11 +1,13 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class StreamingOffer(BaseModel):
     """Represents a streaming availability offer for a film in a specific country."""
+
+    model_config = ConfigDict(frozen=True)
 
     country_code: str = Field(..., description="ISO 3166-1 alpha-2 country code (e.g., 'US', 'FR')")
     country_name: str = Field(
@@ -25,9 +27,6 @@ class StreamingOffer(BaseModel):
     )
     logo_path: Optional[str] = Field(None, description="TMDB logo path for the provider")
     display_priority: Optional[int] = Field(None, description="Display priority for the provider")
-
-    class Config:
-        frozen = True
 
 
 class TMDBMovieInfo(BaseModel):

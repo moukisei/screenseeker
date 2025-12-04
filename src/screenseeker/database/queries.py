@@ -4,7 +4,7 @@ Database query helper functions.
 Provides convenient functions for common database operations.
 """
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import List, Optional
 
 from sqlalchemy import func, or_
@@ -118,7 +118,7 @@ def get_or_create_film(
     film = Film(
         letterboxd_title=title,
         letterboxd_year=year,
-        date_added=datetime.utcnow(),
+        date_added=datetime.now(UTC),
     )
     session.add(film)
     session.flush()  # Get the ID without committing
@@ -138,7 +138,7 @@ def get_stale_films(session: Session, days: int = 7) -> List[Film]:
     Returns:
         List of stale films
     """
-    stale_date = datetime.utcnow() - timedelta(days=days)
+    stale_date = datetime.now(UTC) - timedelta(days=days)
 
     return (
         session.query(Film)
@@ -176,7 +176,7 @@ def mark_film_watched(session: Session, film_id: int, watched: bool = True) -> O
 
     if film:
         film.watched = watched
-        film.watched_at = datetime.utcnow() if watched else None
+        film.watched_at = datetime.now(UTC) if watched else None
         session.flush()
         logger.info(f"Marked film '{film.full_title}' as {'watched' if watched else 'unwatched'}")
 
@@ -304,7 +304,7 @@ def save_streaming_offers(
 
     # Create new offers
     if checked_at is None:
-        checked_at = datetime.utcnow()
+        checked_at = datetime.now(UTC)
 
     for offer_data in offers:
         offer = StreamingOffer(

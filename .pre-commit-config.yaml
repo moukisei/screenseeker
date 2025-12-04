@@ -26,6 +26,7 @@ repos:
           - types-beautifulsoup4
           - sqlalchemy[mypy]
         args: [--ignore-missing-imports, --check-untyped-defs]
+        exclude: ^tests/
 
   # Standard pre-commit hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks

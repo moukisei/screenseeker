@@ -2,7 +2,7 @@
 SQLAlchemy models for ScreenSeeker database.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import List, Optional
 
 from sqlalchemy import (
@@ -67,9 +67,11 @@ class Film(Base):
     )  # When streaming data was last fetched
 
     # Timestamps
-    created_at: Mapped[datetime] = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at: Mapped[datetime] = Column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
     updated_at: Mapped[Optional[datetime]] = Column(
-        DateTime, nullable=True, onupdate=datetime.utcnow
+        DateTime, nullable=True, onupdate=lambda: datetime.now(UTC)
     )
 
     # Relationships
@@ -134,7 +136,9 @@ class StreamingOffer(Base):
     checked_at: Mapped[datetime] = Column(DateTime, nullable=False)  # When this offer was verified
 
     # Timestamps
-    created_at: Mapped[datetime] = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at: Mapped[datetime] = Column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
 
     # Relationships
     film: Mapped["Film"] = relationship("Film", back_populates="streaming_offers")

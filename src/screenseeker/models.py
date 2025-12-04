@@ -3,7 +3,7 @@ import re
 from datetime import date, datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from screenseeker.logger import get_logger
 
@@ -12,6 +12,8 @@ logger = get_logger(__name__)
 
 class Film(BaseModel):
     """Represents a film entry from Letterboxd."""
+
+    model_config = ConfigDict(frozen=True)
 
     film_id: str = Field(default="", description="Unique auto-generated identifier")
     film_full_title: str = Field(..., description="Full display name of the film with year")
@@ -95,9 +97,6 @@ class Film(BaseModel):
         if not v:
             raise ValueError("film_id cannot be empty")
         return v
-
-    class Config:
-        frozen = True  # Make instances immutable
 
 
 class ScrapingResult(BaseModel):
