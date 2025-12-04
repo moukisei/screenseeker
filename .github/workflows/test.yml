@@ -29,6 +29,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+        pip install -e .
 
     - name: Create .env file for tests
       run: |
@@ -57,6 +58,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+        pip install -e .
 
     - name: Create .env file for tests
       run: |
@@ -93,6 +95,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+        pip install -e .
 
     - name: Run ruff linter
       run: |
