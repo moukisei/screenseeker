@@ -2,8 +2,9 @@ import csv
 from pathlib import Path
 from typing import Optional
 
-from models import Film, ScrapingResult
-from scrapers.base import BaseScraper
+from screenseeker.models import Film, ScrapingResult
+
+from ..scrapers.base import BaseScraper
 
 
 class CSVScraper(BaseScraper):

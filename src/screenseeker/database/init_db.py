@@ -4,8 +4,9 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from database.session import get_database_info, init_db
-from logger import get_logger, setup_logger
+from screenseeker.logger import get_logger, setup_logger
+
+from .session import get_database_info, init_db
 
 # Setup logger
 setup_logger(level="INFO", log_to_file=False, use_colors=True)

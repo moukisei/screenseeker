@@ -3,8 +3,9 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from enrichers.enrichment_models import EnrichmentResult, StreamingOffer
-from logger import get_logger
+from screenseeker.logger import get_logger
+
+from ..enrichers.enrichment_models import EnrichmentResult, StreamingOffer
 
 logger = get_logger(__name__)
 

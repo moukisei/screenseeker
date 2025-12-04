@@ -6,8 +6,9 @@ from typing import Optional
 import requests
 from bs4 import BeautifulSoup
 
-from models import Film, ScrapingResult
-from scrapers.base import BaseScraper
+from screenseeker.models import Film, ScrapingResult
+
+from ..scrapers.base import BaseScraper
 
 
 class HTMLScraper(BaseScraper):

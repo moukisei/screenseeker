@@ -5,7 +5,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from logger import get_logger
+from screenseeker.logger import get_logger
 
 logger = get_logger(__name__)
 

@@ -9,8 +9,8 @@ from tenacity import (
     wait_exponential,
 )
 
-from enrichers.base import BaseEnricher
-from enrichers.enrichment_models import EnrichmentResult, StreamingOffer, TMDBMovieInfo
+from ..enrichers.base import BaseEnricher
+from ..enrichers.enrichment_models import EnrichmentResult, StreamingOffer, TMDBMovieInfo
 
 
 class TMDBEnricher(BaseEnricher):
