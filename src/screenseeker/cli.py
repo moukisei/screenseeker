@@ -26,10 +26,10 @@ from pathlib import Path
 
 import click
 
-import config
-from database import get_session, init_db
-from database.models import Film
-from database.queries import (
+from . import config
+from .database import get_session, init_db
+from .database.models import Film
+from .database.queries import (
     get_database_stats,
     get_film_by_title_year,
     get_films_by_country,
@@ -39,12 +39,12 @@ from database.queries import (
     mark_film_watched,
     search_films_by_title,
 )
-from database.service import enrich_and_save_film
-from database.session import get_database_info, reset_database
-from enrichers import TMDBEnricher, WatchStrategyAnalyzer
-from exporters import JSONExporter
-from logger import get_logger, setup_logger
-from scrapers import CSVScraper, HTMLScraper
+from .database.service import enrich_and_save_film
+from .database.session import get_database_info, reset_database
+from .enrichers import TMDBEnricher, WatchStrategyAnalyzer
+from .exporters import JSONExporter
+from .logger import get_logger, setup_logger
+from .scrapers import CSVScraper, HTMLScraper
 
 # Set up logging
 setup_logger(level=config.LOG_LEVEL, log_to_file=config.LOG_TO_FILE, use_colors=True)
@@ -263,7 +263,7 @@ def sync(method, csv_file, save_json):
             click.echo("\n💾 Saving to database...")
 
             with get_session() as session:
-                from database.queries import get_or_create_film
+                from .database.queries import get_or_create_film
 
                 added = 0
                 existing = 0
@@ -1086,7 +1086,7 @@ def _import_json_file(json_path):
     skipped = 0
 
     with get_session() as session:
-        from database.queries import get_or_create_film
+        from .database.queries import get_or_create_film
 
         for film_data in films:
             try:

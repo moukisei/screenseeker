@@ -2,9 +2,10 @@ import json
 import sys
 from typing import Optional
 
-import config
-from enrichers import TMDBEnricher, WatchStrategyAnalyzer
-from logger import get_logger, setup_logger
+from screenseeker.enrichers import TMDBEnricher, WatchStrategyAnalyzer
+from screenseeker.logger import get_logger, setup_logger
+
+from . import config
 
 # Set up logging
 setup_logger(level=config.LOG_LEVEL, log_to_file=config.LOG_TO_FILE, use_colors=True)

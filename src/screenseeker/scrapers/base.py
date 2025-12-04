@@ -2,8 +2,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional
 
-from logger import get_logger
-from models import ScrapingResult
+from screenseeker.logger import get_logger
+from screenseeker.models import ScrapingResult
 
 
 class BaseScraper(ABC):

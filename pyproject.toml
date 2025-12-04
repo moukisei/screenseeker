@@ -23,9 +23,12 @@ dependencies = [
 
 [tool.poetry]
 license = "Apache-2.0"
+packages = [
+    { include = "screenseeker", from = "src" }
+]
 
 [project.scripts]
-screenseeker = "cli:cli"
+screenseeker = "screenseeker.cli:cli"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
@@ -49,11 +52,16 @@ exclude = [
 # Disable specific checks that are too strict for this codebase
 [[tool.mypy.overrides]]
 module = [
-    "database.*",
-    "enrichers.*",
-    "scrapers.*",
-    "cli",
-    "logger",
+    "screenseeker.database.*",
+    "screenseeker.enrichers.*",
+    "screenseeker.scrapers.*",
+    "screenseeker.exporters.*",
+    "screenseeker.cli",
+    "screenseeker.logger",
+    "screenseeker.config",
+    "screenseeker.models",
+    "screenseeker.enrich",
+    "screenseeker.exceptions",
 ]
 ignore_errors = true
 

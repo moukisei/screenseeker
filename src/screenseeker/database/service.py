@@ -9,16 +9,17 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from database.models import Film
-from database.queries import (
+from screenseeker.logger import get_logger
+
+from ..enrichers.enrichment_models import EnrichmentResult
+from ..enrichers.tmdb_enricher import TMDBEnricher
+from .models import Film
+from .queries import (
     get_film_by_title_year,
     get_film_by_tmdb_id,
     get_or_create_film,
     save_streaming_offers,
 )
-from enrichers.enrichment_models import EnrichmentResult
-from enrichers.tmdb_enricher import TMDBEnricher
-from logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -173,6 +174,22 @@ def update_film_from_enrichment(session: Session, film: Film, enrichment: Enrich
     """
     tmdb_movie = enrichment.tmdb_movie
 
+    # Check if another film already has this TMDB ID
+    if film.tmdb_id != tmdb_movie.tmdb_id:
+        existing_film_with_tmdb_id = get_film_by_tmdb_id(session, tmdb_movie.tmdb_id)
+        if existing_film_with_tmdb_id and existing_film_with_tmdb_id.id != film.id:
+            logger.warning(
+                f"Duplicate film detected: '{film.full_title}' (ID: {film.id}) "
+                f"matches TMDB ID {tmdb_movie.tmdb_id} already used by "
+                f"'{existing_film_with_tmdb_id.full_title}' (ID: {existing_film_with_tmdb_id.id}). "
+                f"Skipping TMDB update to preserve database integrity."
+            )
+            # Mark as low confidence to indicate potential duplicate
+            film.match_confidence = "duplicate"
+            film.last_checked = datetime.utcnow()
+            session.flush()
+            return film
+
     # Update TMDB data (might have changed or be newly added)
     film.tmdb_id = tmdb_movie.tmdb_id
     film.tmdb_title = tmdb_movie.title
@@ -268,7 +285,7 @@ def convert_db_offers_to_pydantic(film: Film) -> list:
     Returns:
         List of Pydantic StreamingOffer objects
     """
-    from enrichers.enrichment_models import StreamingOffer as PydanticStreamingOffer
+    from ..enrichers.enrichment_models import StreamingOffer as PydanticStreamingOffer
 
     return [
         PydanticStreamingOffer(

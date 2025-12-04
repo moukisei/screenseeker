@@ -10,8 +10,9 @@ from typing import List, Optional
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
-from database.models import Film, StreamingOffer
-from logger import get_logger
+from screenseeker.logger import get_logger
+
+from .models import Film, StreamingOffer
 
 logger = get_logger(__name__)
 

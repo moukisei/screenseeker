@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from enrichers.enrichment_models import EnrichmentResult
-from logger import get_logger
+from screenseeker.logger import get_logger
+
+from ..enrichers.enrichment_models import EnrichmentResult
 
 
 class BaseEnricher(ABC):

@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
-from logger import get_logger
-from models import ScrapingResult
+from screenseeker.logger import get_logger
+from screenseeker.models import ScrapingResult
 
 logger = get_logger(__name__)
 

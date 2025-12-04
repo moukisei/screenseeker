@@ -6,8 +6,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from database.models import StreamingOffer
-from database.queries import (
+from screenseeker.database.models import StreamingOffer
+from screenseeker.database.queries import (
     get_database_stats,
     get_film_by_title_year,
     get_film_by_tmdb_id,

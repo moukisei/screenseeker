@@ -8,13 +8,14 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from database.models import Base
-from logger import get_logger
+from ..logger import get_logger
+from .models import Base
 
 logger = get_logger(__name__)
 
 # Database configuration
-DATABASE_DIR = Path(__file__).parent.parent / "data"
+# Go up from src/screenseeker/database/ to project root, then into data/
+DATABASE_DIR = Path(__file__).parent.parent.parent.parent / "data"
 DATABASE_PATH = DATABASE_DIR / "screenseeker.db"
 DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
 
@@ -112,7 +113,7 @@ def get_database_info() -> dict:
         # Get table counts
         try:
             with get_session() as session:
-                from database.models import Film, StreamingOffer
+                from .models import Film, StreamingOffer
 
                 film_count = session.query(Film).count()
                 offer_count = session.query(StreamingOffer).count()
