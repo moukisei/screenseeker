@@ -24,7 +24,10 @@ from screenseeker.database.queries import (
     search_films_by_title,
 )
 from screenseeker.database.service import (
+    convert_db_offers_to_pydantic,
     create_film_from_enrichment,
+    enrich_and_save_film,
+    get_film_with_offers,
     needs_refresh,
     update_film_from_enrichment,
 )
@@ -559,6 +562,180 @@ class TestUpdateFilmFromEnrichment:
 
         assert updated_film.tmdb_id is None
         assert updated_film.match_confidence == "duplicate"
+
+
+class TestEnrichAndSaveFilm:
+    """Tests for enrich_and_save_film function."""
+
+    def test_enrich_and_save_new_film(self, test_session):
+        """Test enriching and saving a new film."""
+        from unittest.mock import MagicMock
+
+        # Create mock enricher
+        mock_enricher = MagicMock()
+        tmdb_movie = create_test_tmdb_movie(tmdb_id=123, title="The Matrix")
+        enrichment = EnrichmentResult(
+            query_title="The Matrix",
+            query_year=1999,
+            success=True,
+            tmdb_movie=tmdb_movie,
+            streaming_offers=[],
+            match_confidence="exact",
+            error_message=None,
+        )
+        mock_enricher.enrich.return_value = enrichment
+
+        film, result = enrich_and_save_film(test_session, mock_enricher, "The Matrix", 1999)
+
+        assert film is not None
+        assert film.tmdb_id == 123
+        assert result.success is True
+        mock_enricher.enrich.assert_called_once_with("The Matrix", 1999, fuzzy_year=True)
+
+    def test_enrich_and_save_existing_film_no_refresh(self, test_session):
+        """Test enriching existing film without refresh."""
+        from unittest.mock import MagicMock
+
+        # Create existing film
+        existing_film, _ = get_or_create_film(test_session, "The Matrix", 1999)
+        existing_film.tmdb_id = 123
+        existing_film.last_checked = datetime.now(UTC)
+        test_session.commit()
+
+        # Create mock enricher
+        mock_enricher = MagicMock()
+        tmdb_movie = create_test_tmdb_movie(tmdb_id=123, title="The Matrix")
+        enrichment = EnrichmentResult(
+            query_title="The Matrix",
+            query_year=1999,
+            success=True,
+            tmdb_movie=tmdb_movie,
+            streaming_offers=[],
+            match_confidence="exact",
+            error_message=None,
+        )
+        mock_enricher.enrich.return_value = enrichment
+
+        film, result = enrich_and_save_film(
+            test_session, mock_enricher, "The Matrix", 1999, force_refresh=False
+        )
+
+        assert film.id == existing_film.id
+
+    def test_enrich_and_save_failed_enrichment(self, test_session):
+        """Test enriching when TMDB enrichment fails."""
+        from unittest.mock import MagicMock
+
+        # Create mock enricher that returns failed enrichment
+        mock_enricher = MagicMock()
+        enrichment = EnrichmentResult(
+            query_title="Unknown Movie",
+            query_year=None,
+            success=False,
+            tmdb_movie=None,
+            streaming_offers=[],
+            match_confidence="none",
+            error_message="Not found",
+        )
+        mock_enricher.enrich.return_value = enrichment
+
+        film, result = enrich_and_save_film(test_session, mock_enricher, "Unknown Movie", None)
+
+        assert film is not None
+        assert film.match_confidence == "none"
+        assert result.success is False
+
+
+class TestGetFilmWithOffers:
+    """Tests for get_film_with_offers function."""
+
+    def test_get_film_with_offers_found(self, test_session):
+        """Test getting film with streaming offers loaded."""
+        film, _ = get_or_create_film(test_session, "Test Movie", 2020)
+        test_session.commit()
+
+        # Add streaming offers
+        offers_data = [
+            {
+                "country_code": "US",
+                "country_name": "United States",
+                "provider_id": 8,
+                "provider_name": "Netflix",
+                "monetization_type": "flatrate",
+            }
+        ]
+        save_streaming_offers(test_session, film.id, offers_data)
+        test_session.commit()
+
+        # Get film with offers
+        result = get_film_with_offers(test_session, "Test Movie", 2020)
+
+        assert result is not None
+        assert result.letterboxd_title == "Test Movie"
+        assert len(result.streaming_offers) == 1
+
+    def test_get_film_with_offers_not_found(self, test_session):
+        """Test getting non-existent film."""
+        result = get_film_with_offers(test_session, "Nonexistent Movie", 2020)
+        assert result is None
+
+    def test_get_film_with_offers_without_year(self, test_session):
+        """Test getting film without specifying year."""
+        film, _ = get_or_create_film(test_session, "Test Movie", None)
+        test_session.commit()
+
+        result = get_film_with_offers(test_session, "Test Movie")
+
+        assert result is not None
+        assert result.letterboxd_title == "Test Movie"
+
+
+class TestConvertDbOffersToPydantic:
+    """Tests for convert_db_offers_to_pydantic function."""
+
+    def test_convert_empty_offers(self, test_session):
+        """Test converting film with no offers."""
+        film, _ = get_or_create_film(test_session, "Test Movie", 2020)
+        test_session.commit()
+
+        offers = convert_db_offers_to_pydantic(film)
+
+        assert isinstance(offers, list)
+        assert len(offers) == 0
+
+    def test_convert_offers_with_data(self, test_session):
+        """Test converting film with streaming offers."""
+        film, _ = get_or_create_film(test_session, "Test Movie", 2020)
+        test_session.commit()
+
+        # Add streaming offers
+        offers_data = [
+            {
+                "country_code": "US",
+                "country_name": "United States",
+                "provider_id": 8,
+                "provider_name": "Netflix",
+                "monetization_type": "flatrate",
+            },
+            {
+                "country_code": "FR",
+                "country_name": "France",
+                "provider_id": 119,
+                "provider_name": "Canal+",
+                "monetization_type": "flatrate",
+            },
+        ]
+        save_streaming_offers(test_session, film.id, offers_data)
+        test_session.commit()
+
+        # Load offers and convert
+        film_with_offers = get_film_with_offers(test_session, "Test Movie", 2020)
+        offers = convert_db_offers_to_pydantic(film_with_offers)
+
+        assert len(offers) == 2
+        assert all(isinstance(offer, StreamingOfferPydantic) for offer in offers)
+        assert offers[0].provider_name == "Netflix"
+        assert offers[1].provider_name == "Canal+"
 
 
 # =============================================================================

@@ -146,7 +146,11 @@ def watch(title, year, force):
 
                 # Log cache info
                 if film.last_checked:
-                    age = datetime.now(UTC) - film.last_checked
+                    # Ensure last_checked is timezone-aware for comparison
+                    last_checked = film.last_checked
+                    if last_checked.tzinfo is None:
+                        last_checked = last_checked.replace(tzinfo=UTC)
+                    age = datetime.now(UTC) - last_checked
                     if age.total_seconds() < 60:
                         click.secho("📊 Data freshly fetched from TMDB", fg="green")
                     else:

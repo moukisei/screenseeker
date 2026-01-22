@@ -155,3 +155,7 @@ class CSVScraper(BaseScraper):
                 error_message=error_msg,
                 source="csv",
             )
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - CSV scraper has no resources to clean up."""
+        pass

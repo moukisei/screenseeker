@@ -16,13 +16,13 @@ Find where to watch films from your Letterboxd watchlist with personalized recom
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/screenseeker.git
+git clone https://github.com/moukisei/screenseeker.git
 cd screenseeker
 
-# Install dependencies
+# Install the package (this makes the 'screenseeker' command available)
+pip install -e .
+# or with poetry
 poetry install
-# or
-pip install -r requirements.txt
 
 # (Optional) Set up pre-commit hooks for development
 pre-commit install
@@ -49,13 +49,13 @@ LETTERBOXD_USERNAME=your_username
 
 ```bash
 # Find where to watch a film
-python cli.py watch "The Matrix (1999)"
+screenseeker watch "The Matrix (1999)"
 
 # Sync your Letterboxd watchlist
-python cli.py sync
+screenseeker sync
 
 # Search your library
-python cli.py search matrix
+screenseeker search matrix
 ```
 
 ## Example Output
@@ -78,13 +78,14 @@ HOW TO WATCH
 
 ```
 screenseeker/
-├── cli.py              # Main CLI interface
-├── config.py           # Configuration (uses .env)
-├── database/           # SQLAlchemy ORM & queries
-├── enrichers/          # TMDB API & watch strategy
-├── scrapers/           # Letterboxd HTML/CSV import
-├── exporters/          # JSON export
-└── tests/              # Test suite
+├── src/screenseeker/
+│   ├── cli.py              # Main CLI interface
+│   ├── config.py           # Configuration (uses .env)
+│   ├── database/           # SQLAlchemy ORM & queries
+│   ├── enrichers/          # TMDB API & watch strategy
+│   ├── scrapers/           # Letterboxd HTML/CSV import
+│   └── exporters/          # JSON export
+└── tests/                  # Test suite
 ```
 
 ## Configuration
@@ -151,10 +152,10 @@ pytest tests/test_database_queries.py -v
 → Set `TMDB_API_KEY` in your `.env` file
 
 **"Film not found"**
-→ Try adding the year: `python cli.py watch "Dune" --year 2021`
+→ Try adding the year: `screenseeker watch "Dune" --year 2021`
 
 **"No films found"**
-→ Run `python cli.py sync` first to import your watchlist
+→ Run `screenseeker sync` first to import your watchlist
 
 ## Contributing
 

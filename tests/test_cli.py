@@ -233,3 +233,190 @@ class TestWatchedCommand:
 
         assert result.exit_code == 0
         mock_mark.assert_called_once()
+
+    @patch("screenseeker.cli.get_session")
+    @patch("screenseeker.cli.get_film_by_title_year")
+    def test_watched_film_not_found(self, mock_get_film, mock_session):
+        """Test watched command when film not found."""
+        mock_get_film.return_value = None
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["watched", "Nonexistent Movie"])
+
+        assert result.exit_code == 1
+        assert "not found" in result.output.lower()
+
+
+class TestSyncCommand:
+    """Test sync command - basic help test only due to complexity."""
+
+    def test_sync_help(self):
+        """Test sync command help works."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["sync", "--help"])
+        assert result.exit_code == 0
+        assert "sync" in result.output.lower() or "scrape" in result.output.lower()
+
+
+class TestDbCommands:
+    """Test database commands."""
+
+    @patch("screenseeker.cli.init_db")
+    @patch("screenseeker.cli.get_database_info")
+    def test_db_init(self, mock_get_info, mock_init_db):
+        """Test db init command."""
+        mock_get_info.return_value = {"path": "/test/path", "exists": True}
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["db", "init"])
+
+        assert result.exit_code == 0
+        mock_init_db.assert_called_once()
+
+    @patch("screenseeker.cli.reset_database")
+    @patch("screenseeker.cli.get_database_info")
+    def test_db_init_with_reset(self, mock_get_info, mock_reset):
+        """Test db init command with reset flag."""
+        mock_get_info.return_value = {"path": "/test/path", "exists": True}
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["db", "init", "--reset"], input="y\n")
+
+        assert result.exit_code == 0
+        mock_reset.assert_called_once()
+
+    @patch("screenseeker.cli.get_session")
+    @patch("screenseeker.cli.get_database_stats")
+    @patch("screenseeker.cli.init_db")
+    def test_db_stats(self, mock_init, mock_stats, mock_session):
+        """Test db stats command."""
+        mock_stats.return_value = {
+            "total_films": 10,
+            "watched_films": 3,
+            "unwatched_films": 7,
+            "films_with_tmdb": 8,
+            "match_rate": 80.0,
+            "total_offers": 50,
+            "unique_providers": 5,
+            "unique_countries": 10,
+            "stale_films": 2,
+        }
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["db", "stats"])
+
+        assert result.exit_code == 0
+        mock_stats.assert_called_once()
+
+
+class TestProvidersCommand:
+    """Test providers command."""
+
+    @patch("screenseeker.cli.get_session")
+    @patch("screenseeker.cli.get_films_by_provider")
+    def test_providers_with_provider_filter(self, mock_get_films, mock_session):
+        """Test providers command with provider filter."""
+        mock_film = Film(letterboxd_title="Test Movie", letterboxd_year=2020)
+        mock_get_films.return_value = [mock_film]
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["providers", "--provider", "Netflix"])
+
+        assert result.exit_code == 0
+        mock_get_films.assert_called_once()
+
+    @patch("screenseeker.cli.get_session")
+    @patch("screenseeker.cli.get_films_by_provider")
+    def test_providers_no_results(self, mock_get_films, mock_session):
+        """Test providers command with no results."""
+        mock_get_films.return_value = []
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["providers", "--provider", "Netflix"])
+
+        assert result.exit_code == 0
+        assert "No films found" in result.output
+
+
+class TestCountryCommand:
+    """Test country command."""
+
+    @patch("screenseeker.cli.get_session")
+    @patch("screenseeker.cli.get_films_by_country")
+    @patch("screenseeker.cli.init_db")
+    def test_country_with_code(self, mock_init, mock_get_films, mock_session):
+        """Test country command with country code."""
+        mock_film = Film(letterboxd_title="Test Movie", letterboxd_year=2020)
+        mock_get_films.return_value = [mock_film]
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["country", "--country", "US"])
+
+        assert result.exit_code == 0
+        mock_get_films.assert_called_once()
+
+    @patch("screenseeker.cli.get_session")
+    @patch("screenseeker.cli.get_films_by_country")
+    @patch("screenseeker.cli.init_db")
+    def test_country_no_results(self, mock_init, mock_get_films, mock_session):
+        """Test country command with no results."""
+        mock_get_films.return_value = []
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["country", "--country", "US"])
+
+        assert result.exit_code == 0
+        assert "No films found" in result.output
+
+
+class TestRefreshCommand:
+    """Test refresh command."""
+
+    @patch("screenseeker.cli.get_session")
+    @patch("screenseeker.cli.get_stale_films")
+    @patch("screenseeker.cli.init_db")
+    def test_refresh_no_stale_films(self, mock_init, mock_get_stale, mock_session):
+        """Test refresh command with no stale films."""
+        mock_get_stale.return_value = []
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["refresh"])
+
+        assert result.exit_code == 0
+        assert "fresh" in result.output.lower()
+
+    @patch("screenseeker.cli.get_session")
+    @patch("screenseeker.cli.get_stale_films")
+    @patch("screenseeker.cli.init_db")
+    def test_refresh_dry_run(self, mock_init, mock_get_stale, mock_session):
+        """Test refresh command in dry-run mode."""
+        mock_film = Film(letterboxd_title="Test Movie", letterboxd_year=2020)
+        mock_get_stale.return_value = [mock_film]
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["refresh", "--dry-run"])
+
+        assert result.exit_code == 0
+        assert "dry run" in result.output.lower() or "would" in result.output.lower()
+
+
+class TestEnrichCommand:
+    """Test enrich command - basic tests only."""
+
+    def test_enrich_help(self):
+        """Test enrich command help works."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["enrich", "--help"])
+        assert result.exit_code == 0
+        assert "enrich" in result.output.lower()
+
+
+class TestReportCommand:
+    """Test report command - basic tests only."""
+
+    def test_report_help(self):
+        """Test report command help works."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["report", "--help"])
+        assert result.exit_code == 0
+        assert "report" in result.output.lower()
