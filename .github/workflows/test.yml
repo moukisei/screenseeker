@@ -31,12 +31,6 @@ jobs:
         pip install -r requirements.txt
         pip install -e .
 
-    - name: Create .env file for tests
-      run: |
-        echo "TMDB_API_KEY=test_key_for_ci" > .env
-        echo "LETTERBOXD_USERNAME=test_user" >> .env
-        echo "LOG_LEVEL=INFO" >> .env
-
     - name: Run tests with pytest
       run: |
         pytest --verbose --tb=short
@@ -59,12 +53,6 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install -e .
-
-    - name: Create .env file for tests
-      run: |
-        echo "TMDB_API_KEY=test_key_for_ci" > .env
-        echo "LETTERBOXD_USERNAME=test_user" >> .env
-        echo "LOG_LEVEL=INFO" >> .env
 
     - name: Run tests with coverage
       run: |

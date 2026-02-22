@@ -26,7 +26,7 @@ from pathlib import Path
 
 import click
 
-from . import config
+from . import config, user_config
 from .database import get_session, init_db
 from .database.models import Film
 from .database.queries import (
@@ -123,20 +123,24 @@ def watch(title, year, force):
 
     click.echo(f"🔍 Searching for: '{title}' ({year or 'no year specified'})")
 
-    # Check TMDB API key
-    if not config.TMDB_API_KEY or config.TMDB_API_KEY == "your_tmdb_api_key_here":
-        click.secho("❌ TMDB API key not configured!", fg="red", bold=True)
-        click.echo("\nPlease set TMDB_API_KEY in your .env file:")
-        click.echo("  1. Copy .env.example to .env")
-        click.echo("  2. Get your free API key at: https://www.themoviedb.org/settings/api")
-        click.echo("  3. Add it to .env: TMDB_API_KEY=your_key_here")
+    # Load user config
+    try:
+        cfg = user_config.load_config()
+    except Exception as e:
+        click.secho(f"❌ {e}", fg="red")
+        sys.exit(1)
+
+    api_key = cfg.get("tmdb", {}).get("api_key", "")
+    if not api_key:
+        click.secho("❌ TMDB API key not configured.", fg="red", bold=True)
+        click.echo("Run `screenseeker config init` to get started.")
         sys.exit(1)
 
     try:
         with TMDBEnricher(
-            api_key=config.TMDB_API_KEY,
-            rate_limit_per_second=config.TMDB_RATE_LIMIT,
-            language=config.TMDB_LANGUAGE,
+            api_key=api_key,
+            rate_limit_per_second=cfg.get("tmdb", {}).get("rate_limit", 5.0),
+            language=cfg.get("tmdb", {}).get("language", "en-US"),
         ) as enricher:
             with get_session() as session:
                 # Enrich and save to database
@@ -160,7 +164,7 @@ def watch(title, year, force):
                         )
 
                 # Analyze with watch strategy
-                analyzer = WatchStrategyAnalyzer(config.SUBSCRIPTION_PROFILE)
+                analyzer = WatchStrategyAnalyzer(user_config.get_subscription_profile(cfg))
                 strategy = analyzer.analyze(result)
 
                 # Display results
@@ -179,7 +183,7 @@ def watch(title, year, force):
         sys.exit(0)
     except Exception as e:
         click.secho(f"❌ Error: {e}", fg="red")
-        click.echo("\nFor more details, run with LOG_LEVEL=DEBUG in your .env file")
+        click.echo("\nFor more details, set LOG_LEVEL=DEBUG in your environment and re-run.")
         if config.LOG_LEVEL == "DEBUG":
             import traceback
 
@@ -219,24 +223,38 @@ def sync(method, csv_file, save_json):
 
     The scraped films are automatically saved to the database.
     """
-    # Determine scraping method
-    scraper_type = method or config.SCRAPER_TYPE
+    # Determine scraping method (default: html)
+    scraper_type = method or "html"
 
     # Create scraper
     if scraper_type.lower() == "html":
-        click.echo(f"📡 Scraping {config.USERNAME}'s watchlist from Letterboxd...")
+        try:
+            cfg = user_config.load_config()
+        except Exception as e:
+            click.secho(f"❌ {e}", fg="red")
+            sys.exit(1)
+        username = user_config.get_letterboxd_username(cfg)
+        if not username:
+            click.secho("❌ Letterboxd username not configured.", fg="red")
+            click.echo("Run `screenseeker config init` to set it up.")
+            sys.exit(1)
+        base_url = f"https://letterboxd.com/{username}/watchlist/"
+        click.echo(f"📡 Scraping {username}'s watchlist from Letterboxd...")
         scraper = HTMLScraper(
-            base_url=config.HTML_URL,
+            base_url=base_url,
             delay_between_requests=config.HTML_DELAY_BETWEEN_REQUESTS,
             timeout=config.HTML_TIMEOUT,
             save_raw_data=config.SAVE_RAW_DATA,
             output_dir=config.OUTPUT_DIR,
         )
     elif scraper_type.lower() == "csv":
-        csv_path = csv_file or config.CSV_FILE_PATH
-        click.echo(f"📄 Importing watchlist from CSV: {csv_path}")
+        if not csv_file:
+            click.secho("❌ --csv-file is required when using CSV mode.", fg="red")
+            click.echo("Example: screenseeker sync --method csv --csv-file watchlist.csv")
+            sys.exit(1)
+        click.echo(f"📄 Importing watchlist from CSV: {csv_file}")
         scraper = CSVScraper(
-            csv_file_path=csv_path,
+            csv_file_path=csv_file,
             save_raw_data=config.SAVE_RAW_DATA,
             output_dir=config.OUTPUT_DIR,
         )
@@ -311,7 +329,7 @@ def sync(method, csv_file, save_json):
         sys.exit(0)
     except Exception as e:
         click.secho(f"❌ Error: {e}", fg="red")
-        click.echo("\nFor more details, run with LOG_LEVEL=DEBUG in your .env file")
+        click.echo("\nFor more details, set LOG_LEVEL=DEBUG in your environment and re-run.")
         if config.LOG_LEVEL == "DEBUG":
             import traceback
 
@@ -451,6 +469,291 @@ def import_json(path, import_all):
     click.echo(f"  • Files processed: {len(json_files)}")
     click.echo(f"  • Films imported: {total_imported}")
     click.echo(f"  • Films skipped: {total_skipped}")
+
+
+# ==============================================================================
+# Config Management
+# ==============================================================================
+
+
+@cli.group(name="config")
+def config_group():
+    """Manage your profile, subscriptions, and API settings."""
+    pass
+
+
+@config_group.command()
+def show():
+    """Display your current configuration."""
+    if not user_config.config_exists():
+        click.secho("No config found.", fg="yellow")
+        click.echo("Run `screenseeker config init` to get started.")
+        return
+
+    try:
+        cfg = user_config.load_config()
+    except Exception as e:
+        click.secho(f"❌ {e}", fg="red")
+        sys.exit(1)
+
+    tmdb = cfg.get("tmdb", {})
+    profile = cfg.get("profile", {})
+    subscriptions = profile.get("subscriptions", [])
+
+    click.echo(f"\nConfig: {user_config.CONFIG_PATH}\n")
+
+    letterboxd = cfg.get("letterboxd", {})
+    click.secho("Letterboxd", fg="cyan", bold=True)
+    lb_username = letterboxd.get("username", "")
+    if lb_username:
+        click.echo(f"  Username : {lb_username}")
+    else:
+        click.secho("  Username : (not set)", fg="red")
+
+    click.secho("\nTMDB", fg="cyan", bold=True)
+    api_key = tmdb.get("api_key", "")
+    if api_key:
+        masked = "•" * max(0, len(api_key) - 4) + api_key[-4:]
+        click.echo(f"  API key    : {masked}")
+    else:
+        click.secho("  API key    : (not set)", fg="red")
+    click.echo(f"  Language   : {tmdb.get('language', 'en-US')}")
+    click.echo(f"  Rate limit : {tmdb.get('rate_limit', 5.0)} req/s")
+
+    click.secho("\nProfile", fg="cyan", bold=True)
+    click.echo(f"  Base country    : {profile.get('base_country', 'FR')}")
+    click.echo(f"  Max VPN options : {profile.get('max_vpn_suggestions', 3)}")
+
+    click.secho("\nSubscriptions", fg="cyan", bold=True)
+    if not subscriptions:
+        click.secho("  (none)", fg="yellow")
+        click.echo("  Add one with: screenseeker config add")
+    else:
+        for i, sub in enumerate(subscriptions, 1):
+            names = sub.get("provider_names", [])
+            vpn = "✓" if sub.get("vpn_enabled") else "✗"
+            countries = sub.get("available_countries", [])
+            countries_str = "all" if countries == "all" else ", ".join(countries)
+            bundles = sub.get("bundle_includes", [])
+            line = f"  {i}. {names[0]:<18} VPN {vpn}  Countries: {countries_str}"
+            if bundles:
+                line += f"   Bundle: {', '.join(bundles[:2])}"
+                if len(bundles) > 2:
+                    line += f" +{len(bundles) - 2} more"
+            click.echo(line)
+
+    click.echo()
+
+
+@config_group.command(name="init")
+def config_init():
+    """Interactive first-time setup wizard."""
+    if user_config.config_exists():
+        click.secho(f"Config already exists at {user_config.CONFIG_PATH}", fg="yellow")
+        if not click.confirm("Overwrite it?"):
+            click.echo("Cancelled.")
+            return
+
+    click.echo("\nWelcome to Screenseeker! Let's set up your profile.\n")
+
+    username = click.prompt("Your Letterboxd username")
+    username = username.strip()
+
+    base_country = click.prompt("Your base country code (e.g. FR, US, GB)", default="FR")
+    base_country = base_country.upper().strip()
+
+    click.echo("\nYou need a free TMDB API key to fetch streaming data.")
+    click.echo("Get one at: https://www.themoviedb.org/settings/api")
+    api_key = click.prompt("\nTMDB API key", hide_input=True)
+
+    click.echo("\nNow let's add your streaming subscriptions.")
+    click.echo("Press Enter with no name to finish.\n")
+
+    subscriptions = []
+    i = 1
+    while True:
+        provider_name = click.prompt(f"Provider {i} name", default="", show_default=False)
+        if not provider_name.strip():
+            break
+
+        vpn_enabled = click.confirm("  VPN enabled?", default=False)
+
+        if vpn_enabled:
+            all_countries = click.confirm("  Available in all countries?", default=True)
+            if all_countries:
+                available_countries = "all"
+            else:
+                countries_input = click.prompt("  Countries (comma-separated)")
+                available_countries = [
+                    c.strip().upper() for c in countries_input.split(",") if c.strip()
+                ]
+        else:
+            countries_input = click.prompt("  Countries (comma-separated)")
+            available_countries = [
+                c.strip().upper() for c in countries_input.split(",") if c.strip()
+            ]
+
+        bundles_input = click.prompt(
+            "  Bundles other services? (comma-separated, or Enter to skip)",
+            default="",
+            show_default=False,
+        )
+        bundle_includes = [b.strip() for b in bundles_input.split(",") if b.strip()]
+
+        sub = {
+            "provider_names": [provider_name.strip()],
+            "vpn_enabled": vpn_enabled,
+            "available_countries": available_countries,
+        }
+        if bundle_includes:
+            sub["bundle_includes"] = bundle_includes
+
+        subscriptions.append(sub)
+        click.secho(f"  ✓ Added {provider_name}", fg="green")
+        click.echo()
+        i += 1
+
+    cfg = {
+        "letterboxd": {
+            "username": username,
+        },
+        "tmdb": {
+            "api_key": api_key,
+            "rate_limit": 5.0,
+            "language": "en-US",
+        },
+        "profile": {
+            "base_country": base_country,
+            "max_vpn_suggestions": 3,
+            "vpn_country_priority": user_config.DEFAULT_VPN_PRIORITY,
+            "subscriptions": subscriptions,
+        },
+    }
+    user_config.save_config(cfg)
+    click.secho(f"\n✓ Saved to {user_config.CONFIG_PATH}", fg="green")
+    click.echo("Run `screenseeker config show` to review your setup.")
+
+
+@config_group.command()
+def add():
+    """Add a streaming subscription (interactive prompts)."""
+    if not user_config.config_exists():
+        click.secho("No config found. Run `screenseeker config init` first.", fg="red")
+        sys.exit(1)
+
+    try:
+        cfg = user_config.load_config()
+    except Exception as e:
+        click.secho(f"❌ {e}", fg="red")
+        sys.exit(1)
+
+    click.echo()
+    provider_name = click.prompt("Provider name")
+    if not provider_name.strip():
+        click.echo("Cancelled.")
+        return
+
+    vpn_enabled = click.confirm("VPN enabled?", default=False)
+
+    if vpn_enabled:
+        all_countries = click.confirm("Available in all countries?", default=True)
+        if all_countries:
+            available_countries = "all"
+        else:
+            countries_input = click.prompt("Countries (comma-separated)")
+            available_countries = [
+                c.strip().upper() for c in countries_input.split(",") if c.strip()
+            ]
+    else:
+        countries_input = click.prompt("Countries (comma-separated)")
+        available_countries = [c.strip().upper() for c in countries_input.split(",") if c.strip()]
+
+    bundles_input = click.prompt(
+        "Bundles other services? (comma-separated, or Enter to skip)",
+        default="",
+        show_default=False,
+    )
+    bundle_includes = [b.strip() for b in bundles_input.split(",") if b.strip()]
+
+    sub = {
+        "provider_names": [provider_name.strip()],
+        "vpn_enabled": vpn_enabled,
+        "available_countries": available_countries,
+    }
+    if bundle_includes:
+        sub["bundle_includes"] = bundle_includes
+
+    cfg.setdefault("profile", {}).setdefault("subscriptions", []).append(sub)
+    user_config.save_config(cfg)
+    click.secho(f"\n✓ {provider_name} added.", fg="green")
+
+
+@config_group.command()
+@click.argument("provider")
+def remove(provider):
+    """Remove a subscription by provider name."""
+    if not user_config.config_exists():
+        click.secho("No config found. Run `screenseeker config init` first.", fg="red")
+        sys.exit(1)
+
+    try:
+        cfg = user_config.load_config()
+    except Exception as e:
+        click.secho(f"❌ {e}", fg="red")
+        sys.exit(1)
+
+    subscriptions = cfg.get("profile", {}).get("subscriptions", [])
+    provider_lower = provider.lower()
+
+    match_idx = None
+    for i, sub in enumerate(subscriptions):
+        names = [n.lower() for n in sub.get("provider_names", [])]
+        if any(provider_lower in n for n in names):
+            match_idx = i
+            break
+
+    if match_idx is None:
+        click.secho(f"❌ No subscription found matching '{provider}'.", fg="red")
+        click.echo("Run `screenseeker config show` to see your subscriptions.")
+        sys.exit(1)
+
+    matched_name = subscriptions[match_idx]["provider_names"][0]
+    if not click.confirm(f"Remove {matched_name} from your subscriptions?"):
+        click.echo("Cancelled.")
+        return
+
+    cfg["profile"]["subscriptions"].pop(match_idx)
+    user_config.save_config(cfg)
+    click.secho(f"✓ Removed {matched_name}.", fg="green")
+
+
+@config_group.command("set-country")
+@click.argument("country_code")
+def set_country(country_code):
+    """Set your base country (e.g. FR, US, GB)."""
+    if not user_config.config_exists():
+        click.secho("No config found. Run `screenseeker config init` first.", fg="red")
+        sys.exit(1)
+
+    try:
+        cfg = user_config.load_config()
+    except Exception as e:
+        click.secho(f"❌ {e}", fg="red")
+        sys.exit(1)
+
+    cfg.setdefault("profile", {})["base_country"] = country_code.upper().strip()
+    user_config.save_config(cfg)
+    click.secho(f"✓ Base country set to {country_code.upper().strip()}.", fg="green")
+
+
+@config_group.command()
+def edit():
+    """Open the config file in your default editor."""
+    if not user_config.config_exists():
+        click.secho("No config found. Run `screenseeker config init` first.", fg="red")
+        sys.exit(1)
+
+    click.edit(filename=str(user_config.CONFIG_PATH))
 
 
 # ==============================================================================
@@ -724,9 +1027,17 @@ def refresh(days, limit, dry_run):
     """
     init_db()
 
-    # Check TMDB API key
-    if not config.TMDB_API_KEY or config.TMDB_API_KEY == "your_tmdb_api_key_here":
-        click.secho("❌ TMDB API key not configured!", fg="red", bold=True)
+    # Load user config
+    try:
+        cfg = user_config.load_config()
+    except Exception as e:
+        click.secho(f"❌ {e}", fg="red")
+        sys.exit(1)
+
+    api_key = cfg.get("tmdb", {}).get("api_key", "")
+    if not api_key:
+        click.secho("❌ TMDB API key not configured.", fg="red", bold=True)
+        click.echo("Run `screenseeker config init` to get started.")
         sys.exit(1)
 
     with get_session() as session:
@@ -762,9 +1073,9 @@ def refresh(days, limit, dry_run):
         click.echo()
 
         with TMDBEnricher(
-            api_key=config.TMDB_API_KEY,
-            rate_limit_per_second=config.TMDB_RATE_LIMIT,
-            language=config.TMDB_LANGUAGE,
+            api_key=api_key,
+            rate_limit_per_second=cfg.get("tmdb", {}).get("rate_limit", 5.0),
+            language=cfg.get("tmdb", {}).get("language", "en-US"),
         ) as enricher:
             with click.progressbar(stale_films, label="Refreshing") as films:
                 for film in films:
@@ -813,13 +1124,17 @@ def enrich(limit, unenriched_only, enrich_all, dry_run):
     """
     init_db()
 
-    # Check TMDB API key
-    if not config.TMDB_API_KEY or config.TMDB_API_KEY == "your_tmdb_api_key_here":
-        click.secho("❌ TMDB API key not configured!", fg="red", bold=True)
-        click.echo("\nPlease set TMDB_API_KEY in your .env file:")
-        click.echo("  1. Copy .env.example to .env")
-        click.echo("  2. Get your free API key at: https://www.themoviedb.org/settings/api")
-        click.echo("  3. Add it to .env: TMDB_API_KEY=your_key_here")
+    # Load user config
+    try:
+        cfg = user_config.load_config()
+    except Exception as e:
+        click.secho(f"❌ {e}", fg="red")
+        sys.exit(1)
+
+    api_key = cfg.get("tmdb", {}).get("api_key", "")
+    if not api_key:
+        click.secho("❌ TMDB API key not configured.", fg="red", bold=True)
+        click.echo("Run `screenseeker config init` to get started.")
         sys.exit(1)
 
     with get_session() as session:
@@ -876,9 +1191,9 @@ def enrich(limit, unenriched_only, enrich_all, dry_run):
         errors = []
 
         with TMDBEnricher(
-            api_key=config.TMDB_API_KEY,
-            rate_limit_per_second=config.TMDB_RATE_LIMIT,
-            language=config.TMDB_LANGUAGE,
+            api_key=api_key,
+            rate_limit_per_second=cfg.get("tmdb", {}).get("rate_limit", 5.0),
+            language=cfg.get("tmdb", {}).get("language", "en-US"),
         ) as enricher:
             with click.progressbar(films_to_enrich, label="Enriching") as films:
                 for film in films:
@@ -935,21 +1250,29 @@ def report(provider):
     """
     init_db()
 
+    # Load user config
+    try:
+        cfg = user_config.load_config()
+    except Exception as e:
+        click.secho(f"❌ {e}", fg="red")
+        sys.exit(1)
+
+    profile = user_config.get_subscription_profile(cfg)
+
     # Get providers from config or args
     if provider:
         providers = list(provider)
     else:
-        # Extract from subscription profile
         providers = []
-        for sub in config.SUBSCRIPTION_PROFILE.get("subscriptions", []):
+        for sub in profile.get("subscriptions", []):
             providers.extend(sub["provider_names"])
 
     if not providers:
-        click.secho("❌ No providers specified", fg="red")
-        click.echo("Use --provider or configure SUBSCRIPTION_PROFILE in config.py")
+        click.secho("❌ No providers configured.", fg="red")
+        click.echo("Add subscriptions with: screenseeker config add")
         sys.exit(1)
 
-    base_country = config.SUBSCRIPTION_PROFILE.get("base_country", "FR")
+    base_country = profile.get("base_country", "FR")
 
     click.echo(f"\n📊 Availability Report ({base_country}):\n")
 

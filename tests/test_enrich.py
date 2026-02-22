@@ -17,6 +17,16 @@ from screenseeker.enrich import (
 from screenseeker.enrichers.enrichment_models import EnrichmentResult, TMDBMovieInfo
 from screenseeker.enrichers.watch_strategy import WatchOption, WatchStrategy
 
+MOCK_CFG = {
+    "tmdb": {"api_key": "test_key", "rate_limit": 5.0, "language": "en-US"},
+    "profile": {
+        "base_country": "FR",
+        "subscriptions": [],
+        "vpn_country_priority": [],
+        "max_vpn_suggestions": 3,
+    },
+}
+
 
 class TestParseTitleYear:
     """Test parse_title_year function."""
@@ -292,11 +302,12 @@ class TestSaveResultToJson:
 class TestMain:
     """Test main function."""
 
+    @patch("screenseeker.enrich.user_config.load_config", return_value=MOCK_CFG)
     @patch("screenseeker.enrich.sys.argv", ["enrich.py"])
     @patch("screenseeker.enrich.input")
     @patch("screenseeker.enrich.TMDBEnricher")
     @patch("screenseeker.enrich.WatchStrategyAnalyzer")
-    def test_main_interactive_mode(self, mock_analyzer, mock_enricher, mock_input):
+    def test_main_interactive_mode(self, mock_analyzer, mock_enricher, mock_input, mock_cfg):
         """Test main function in interactive mode."""
         # Mock user input
         mock_input.return_value = "The Matrix (1999)"
@@ -344,10 +355,11 @@ class TestMain:
         assert exit_code == 0
         mock_enricher_instance.enrich.assert_called_once_with("The Matrix", 1999)
 
+    @patch("screenseeker.enrich.user_config.load_config", return_value=MOCK_CFG)
     @patch("screenseeker.enrich.sys.argv", ["enrich.py", "The Matrix", "(1999)"])
     @patch("screenseeker.enrich.TMDBEnricher")
     @patch("screenseeker.enrich.WatchStrategyAnalyzer")
-    def test_main_with_args(self, mock_analyzer, mock_enricher):
+    def test_main_with_args(self, mock_analyzer, mock_enricher, mock_cfg):
         """Test main function with command line arguments."""
         # Mock enricher
         mock_enricher_instance = MagicMock()
@@ -391,9 +403,10 @@ class TestMain:
 
         assert exit_code == 0
 
+    @patch("screenseeker.enrich.user_config.load_config", return_value=MOCK_CFG)
     @patch("screenseeker.enrich.sys.argv", ["enrich.py"])
     @patch("screenseeker.enrich.input")
-    def test_main_empty_input(self, mock_input):
+    def test_main_empty_input(self, mock_input, mock_cfg):
         """Test main function with empty input."""
         mock_input.return_value = ""
 
@@ -401,9 +414,10 @@ class TestMain:
 
         assert exit_code == 1
 
+    @patch("screenseeker.enrich.user_config.load_config", return_value=MOCK_CFG)
     @patch("screenseeker.enrich.sys.argv", ["enrich.py"])
     @patch("screenseeker.enrich.input")
-    def test_main_keyboard_interrupt(self, mock_input):
+    def test_main_keyboard_interrupt(self, mock_input, mock_cfg):
         """Test main function handles keyboard interrupt."""
         mock_input.side_effect = KeyboardInterrupt()
 
@@ -411,15 +425,19 @@ class TestMain:
 
         assert exit_code == 0
 
-    @patch.object(config, "TMDB_API_KEY", "your_tmdb_api_key_here")
-    def test_main_no_api_key(self):
+    @patch(
+        "screenseeker.enrich.user_config.load_config",
+        return_value={"tmdb": {"api_key": ""}, "profile": {}},
+    )
+    def test_main_no_api_key(self, mock_cfg):
         """Test main function with missing API key."""
         exit_code = main()
         assert exit_code == 1
 
+    @patch("screenseeker.enrich.user_config.load_config", return_value=MOCK_CFG)
     @patch("screenseeker.enrich.sys.argv", ["enrich.py", "The Matrix"])
     @patch("screenseeker.enrich.TMDBEnricher")
-    def test_main_enricher_error(self, mock_enricher):
+    def test_main_enricher_error(self, mock_enricher, mock_cfg):
         """Test main function handles enricher errors."""
         mock_enricher.return_value.__enter__.side_effect = ValueError("Invalid API key")
 

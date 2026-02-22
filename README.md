@@ -23,27 +23,23 @@ cd screenseeker
 pip install -e .
 # or with poetry
 poetry install
-
-# (Optional) Set up pre-commit hooks for development
-pre-commit install
 ```
 
 ### 2. Configure
 
+Run the setup wizard — it walks you through everything interactively:
+
 ```bash
-# Copy environment template
-cp .env.example .env
-
-# Edit .env and add your TMDB API key
-# Get free key at: https://www.themoviedb.org/settings/api
-nano .env
+screenseeker config init
 ```
 
-**Required in `.env`:**
-```
-TMDB_API_KEY=your_api_key_here
-LETTERBOXD_USERNAME=your_username
-```
+You will be prompted for:
+- Your Letterboxd username (used to scrape your watchlist)
+- Your base country (e.g. `FR`, `US`, `GB`)
+- Your TMDB API key — get one free at [themoviedb.org](https://www.themoviedb.org/settings/api)
+- Your streaming subscriptions (name, VPN availability, bundled services)
+
+The config is saved to `~/.config/screenseeker/config.toml`.
 
 ### 3. Run
 
@@ -62,17 +58,68 @@ screenseeker search matrix
 
 ```
 🔍 Searching for: 'The Matrix' (1999)
-```
+
 ================================================================================
 HOW TO WATCH
 ================================================================================
 
-## Documentation
+🎯 TMDB Match: The Matrix (1999) - Confidence: exact
+   ⭐ Rating: 8.7/10
 
-- **[User Guide](docs/USER_GUIDE.md)** - Complete usage guide
-- **[CLI Reference](docs/CLI_REFERENCE.md)** - All commands and options
-- **[Development Guide](docs/DEVELOPMENT.md)** - Contributing and architecture
-- **[Technical Audit](AUDIT.md)** - Codebase analysis and recommendations
+✅ WATCH NOW (No VPN needed):
+   Netflix - France
+
+🌍 VPN OPTIONS:
+   Netflix - Connect to United States
+   Netflix - Connect to United Kingdom
+```
+
+## Configuration
+
+### Subscription profile
+
+```bash
+screenseeker config init          # First-time interactive setup
+screenseeker config show          # Display current config
+screenseeker config add           # Add a subscription (guided prompts)
+screenseeker config remove NAME   # Remove a subscription
+screenseeker config set-country CODE  # Change your base country (e.g. US)
+screenseeker config edit          # Open config file in $EDITOR
+```
+
+The config file lives at `~/.config/screenseeker/config.toml`:
+
+```toml
+[tmdb]
+api_key = "your_api_key_here"
+rate_limit = 5.0
+language = "en-US"
+
+[profile]
+base_country = "FR"
+max_vpn_suggestions = 3
+vpn_country_priority = ["US", "GB", "CA", ...]
+
+[[profile.subscriptions]]
+provider_names = ["Netflix"]
+vpn_enabled = true
+available_countries = "all"
+
+[[profile.subscriptions]]
+provider_names = ["Canal+", "Canal Plus"]
+vpn_enabled = false
+available_countries = ["FR"]
+bundle_includes = ["HBO Max", "Apple TV+"]
+```
+
+### Scraper & logging settings
+
+These are optional and can be overridden via shell environment variables:
+
+```bash
+LOG_LEVEL=DEBUG screenseeker watch "Inception"
+OUTPUT_DIR=/tmp/screenseeker screenseeker sync
+```
 
 ## Project Structure
 
@@ -80,50 +127,13 @@ HOW TO WATCH
 screenseeker/
 ├── src/screenseeker/
 │   ├── cli.py              # Main CLI interface
-│   ├── config.py           # Configuration (uses .env)
+│   ├── config.py           # Low-level defaults (scraper, logging)
+│   ├── user_config.py      # Config file management (~/.config/screenseeker/)
 │   ├── database/           # SQLAlchemy ORM & queries
 │   ├── enrichers/          # TMDB API & watch strategy
 │   ├── scrapers/           # Letterboxd HTML/CSV import
 │   └── exporters/          # JSON export
-└── tests/                  # Test suite
-```
-
-## Configuration
-
-Edit `.env` to customize:
-
-```bash
-# TMDB Settings
-TMDB_API_KEY=your_key
-TMDB_RATE_LIMIT=5.0
-TMDB_LANGUAGE=en-US
-
-# Letterboxd
-LETTERBOXD_USERNAME=your_username
-
-# Logging
-LOG_LEVEL=INFO
-LOG_TO_FILE=False
-```
-
-Edit `config.py` for subscription profile:
-
-Colored console output with configurable levels:
-```python
-SUBSCRIPTION_PROFILE = {
-    "base_country": "FR",
-    "subscriptions": [
-        {
-            "provider_names": ["Netflix"],
-            "vpn_enabled": True,
-        },
-        {
-            "provider_names": ["Canal+"],
-            "vpn_enabled": False,
-            "bundle_includes": ["HBO Max", "Apple TV+"],
-        }
-    ]
-}
+└── tests/                  # Test suite (mirrors src/ structure)
 ```
 
 ## Requirements
@@ -139,17 +149,19 @@ SUBSCRIPTION_PROFILE = {
 pytest
 
 # Run with coverage
-pytest --cov=. --cov-report=html
+pytest --cov=src/screenseeker --cov-report=html
 
 # Run specific test file
-pytest tests/test_database_queries.py -v
+pytest tests/database/test_database.py -v
 ```
 
-    if strategy.best_option:
-        print(f"Watch on {strategy.best_option.provider}")
+## Troubleshooting
+
+**"No config file found"**
+→ Run `screenseeker config init` to create your config
 
 **"TMDB API key not configured"**
-→ Set `TMDB_API_KEY` in your `.env` file
+→ Run `screenseeker config init` or set `api_key` in `~/.config/screenseeker/config.toml`
 
 **"Film not found"**
 → Try adding the year: `screenseeker watch "Dune" --year 2021`
@@ -176,11 +188,9 @@ This project uses pre-commit hooks to maintain code quality:
 
 Run manually: `pre-commit run --all-files`
 
-See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for details.
+## License
 
-## Limitations
-
-MIT License - see LICENSE file for details
+Apache 2.0 — see [LICENSE](LICENSE) file for details.
 
 ## Links
 

@@ -10,6 +10,18 @@ from screenseeker.cli import cli
 from screenseeker.database.models import Film
 from screenseeker.enrichers.enrichment_models import EnrichmentResult, TMDBMovieInfo
 
+# Minimal valid config returned by user_config.load_config() in tests
+MOCK_CFG = {
+    "letterboxd": {"username": "testuser"},
+    "tmdb": {"api_key": "test_key", "rate_limit": 5.0, "language": "en-US"},
+    "profile": {
+        "base_country": "FR",
+        "subscriptions": [],
+        "vpn_country_priority": [],
+        "max_vpn_suggestions": 3,
+    },
+}
+
 
 class TestCLIBasics:
     """Test basic CLI functionality."""
@@ -97,13 +109,14 @@ class TestCLIBasics:
 class TestWatchCommand:
     """Test watch command."""
 
+    @patch("screenseeker.cli.user_config.load_config", return_value=MOCK_CFG)
     @patch("screenseeker.cli.TMDBEnricher")
     @patch("screenseeker.cli.get_session")
     @patch("screenseeker.cli.enrich_and_save_film")
     @patch("screenseeker.cli.WatchStrategyAnalyzer")
     @patch("screenseeker.cli._display_watch_strategy")
     def test_watch_with_title_and_year(
-        self, mock_display, mock_analyzer, mock_enrich, mock_session, mock_enricher
+        self, mock_display, mock_analyzer, mock_enrich, mock_session, mock_enricher, mock_cfg
     ):
         """Test watch command with title and year."""
         # Setup mocks
@@ -142,11 +155,12 @@ class TestWatchCommand:
         assert result.exit_code == 0
         assert "Searching for" in result.output
 
-    @patch("screenseeker.cli.config")
-    def test_watch_without_api_key(self, mock_config):
+    @patch(
+        "screenseeker.cli.user_config.load_config",
+        return_value={"tmdb": {"api_key": ""}, "profile": {}},
+    )
+    def test_watch_without_api_key(self, mock_cfg):
         """Test watch command without TMDB API key."""
-        mock_config.TMDB_API_KEY = None
-
         runner = CliRunner()
         result = runner.invoke(cli, ["watch", "Test Movie"])
 
@@ -372,10 +386,11 @@ class TestCountryCommand:
 class TestRefreshCommand:
     """Test refresh command."""
 
+    @patch("screenseeker.cli.user_config.load_config", return_value=MOCK_CFG)
     @patch("screenseeker.cli.get_session")
     @patch("screenseeker.cli.get_stale_films")
     @patch("screenseeker.cli.init_db")
-    def test_refresh_no_stale_films(self, mock_init, mock_get_stale, mock_session):
+    def test_refresh_no_stale_films(self, mock_init, mock_get_stale, mock_session, mock_cfg):
         """Test refresh command with no stale films."""
         mock_get_stale.return_value = []
 
@@ -385,10 +400,11 @@ class TestRefreshCommand:
         assert result.exit_code == 0
         assert "fresh" in result.output.lower()
 
+    @patch("screenseeker.cli.user_config.load_config", return_value=MOCK_CFG)
     @patch("screenseeker.cli.get_session")
     @patch("screenseeker.cli.get_stale_films")
     @patch("screenseeker.cli.init_db")
-    def test_refresh_dry_run(self, mock_init, mock_get_stale, mock_session):
+    def test_refresh_dry_run(self, mock_init, mock_get_stale, mock_session, mock_cfg):
         """Test refresh command in dry-run mode."""
         mock_film = Film(letterboxd_title="Test Movie", letterboxd_year=2020)
         mock_get_stale.return_value = [mock_film]

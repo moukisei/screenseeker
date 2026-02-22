@@ -5,7 +5,7 @@ from typing import Optional
 from screenseeker.enrichers import TMDBEnricher, WatchStrategyAnalyzer
 from screenseeker.logger import get_logger, setup_logger
 
-from . import config
+from . import config, user_config
 
 # Set up logging
 setup_logger(level=config.LOG_LEVEL, log_to_file=config.LOG_TO_FILE, use_colors=True)
@@ -164,11 +164,17 @@ def save_result_to_json(result, filename: str = "enrichment_result.json"):
 def main():
     """Main CLI entry point."""
 
-    # Check if TMDB API key is configured
-    if not config.TMDB_API_KEY or config.TMDB_API_KEY == "your_tmdb_api_key_here":
-        logger.error("❌ TMDB API key not configured!")
-        logger.error("Please set TMDB_API_KEY in config.py")
-        logger.error("Get your free API key at: https://www.themoviedb.org/settings/api")
+    # Load user config
+    try:
+        cfg = user_config.load_config()
+    except Exception as e:
+        logger.error(f"❌ {e}")
+        return 1
+
+    api_key = cfg.get("tmdb", {}).get("api_key", "")
+    if not api_key:
+        logger.error("❌ TMDB API key not configured.")
+        logger.error("Run `screenseeker config init` to get started.")
         return 1
 
     # Get input from user
@@ -196,14 +202,14 @@ def main():
     # Create enricher and enrich
     try:
         with TMDBEnricher(
-            api_key=config.TMDB_API_KEY,
-            rate_limit_per_second=config.TMDB_RATE_LIMIT,
-            language=config.TMDB_LANGUAGE,
+            api_key=api_key,
+            rate_limit_per_second=cfg.get("tmdb", {}).get("rate_limit", 5.0),
+            language=cfg.get("tmdb", {}).get("language", "en-US"),
         ) as enricher:
             result = enricher.enrich(title, year)
 
             # Analyze with watch strategy
-            analyzer = WatchStrategyAnalyzer(config.SUBSCRIPTION_PROFILE)
+            analyzer = WatchStrategyAnalyzer(user_config.get_subscription_profile(cfg))
             strategy = analyzer.analyze(result)
 
             # Display personalized watch strategy
