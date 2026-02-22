@@ -89,7 +89,7 @@ screenseeker config edit          # Open config file in $EDITOR
 
 The config file lives at `~/.config/screenseeker/config.toml`:
 
-```toml
+```
 [tmdb]
 api_key = "your_api_key_here"
 rate_limit = 5.0
