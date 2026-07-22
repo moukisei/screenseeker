@@ -4,6 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}ScreenSeeker{% endblock %}</title>
+  {#
+    htmx ignores the body of a non-2xx response by default. A refused job
+    start is a genuine 409 whose body is the panel showing what is already
+    running, so that one code is allowed to swap. Configured through the meta
+    tag rather than a script because htmx.min.js below is deferred and would
+    not exist yet.
+  #}
+  <meta name="htmx-config" content='{"responseHandling":[{"code":"204","swap":false},{"code":"409","swap":true},{"code":"[23]..","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
   <link rel="stylesheet" href="{{ url_for('static', path='/app.css') }}">
   {# Vendored rather than pulled from a CDN: the app is expected to run on a
      machine that may have no route to the public internet. #}

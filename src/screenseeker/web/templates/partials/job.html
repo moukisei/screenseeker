@@ -1,0 +1,50 @@
+{#
+  A background job's status. Polls itself once a second while the job is
+  active and stops asking when it reaches a terminal state - the terminal
+  fragment carries no hx-trigger, so there is nothing to cancel.
+
+  `refused` is set when a start request was rejected because this job was
+  already running.
+#}
+<div id="job-panel"
+     class="job job--{{ job.status }}"
+     {% if job.is_active %}
+     hx-get="/jobs/{{ job.id }}"
+     hx-trigger="load delay:1s"
+     hx-target="this"
+     hx-swap="outerHTML"
+     {% endif %}>
+
+  {% if refused %}
+    <p class="job__refused">{{ refused }}</p>
+  {% endif %}
+
+  <p class="job__head">
+    <span class="job__label">{{ job.label }}</span>
+    <span class="job__status">{{ job.status }}</span>
+  </p>
+
+  {% if job.message %}<p class="job__message">{{ job.message }}</p>{% endif %}
+
+  {% if job.progress_total %}
+    <progress class="job__bar" value="{{ job.progress_current }}" max="{{ job.progress_total }}"></progress>
+    <p class="job__counts">{{ job.progress_current }} / {{ job.progress_total }} · {{ job.percent }}%</p>
+  {% elif job.is_active %}
+    <progress class="job__bar"></progress>
+  {% endif %}
+
+  {#
+    Shown whenever it is set, including on a job that otherwise succeeded: a
+    refresh where 12 of 181 films failed did finish, and burying those 12 is
+    the vanishing this panel exists to stop.
+  #}
+  {% if job.error %}
+    <pre class="job__error">{{ job.error }}</pre>
+  {% endif %}
+
+  {% if not job.is_active %}
+    <p class="job__done">
+      <a href="/">Reload the library</a> to see the result.
+    </p>
+  {% endif %}
+</div>

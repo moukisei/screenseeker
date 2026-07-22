@@ -96,7 +96,7 @@ class TestSyncCommand:
 
     @patch("screenseeker.cli.user_config.load_config", return_value=MOCK_CFG)
     @patch("screenseeker.cli.init_db")
-    @patch("screenseeker.cli.HTMLScraper")
+    @patch("screenseeker.cli.build_scraper")
     @patch("screenseeker.cli.get_session")
     @patch("screenseeker.cli.ingest_watchlist")
     def test_reports_counts(self, mock_ingest, mock_session, mock_scraper, mock_init, mock_cfg):
@@ -121,7 +121,7 @@ class TestSyncCommand:
 
     @patch("screenseeker.cli.user_config.load_config", return_value=MOCK_CFG)
     @patch("screenseeker.cli.init_db")
-    @patch("screenseeker.cli.HTMLScraper")
+    @patch("screenseeker.cli.build_scraper")
     @patch("screenseeker.cli.get_session")
     @patch("screenseeker.cli.ingest_watchlist")
     def test_scrape_failure_exits_nonzero(
@@ -180,7 +180,7 @@ class TestRefreshCommand:
     @patch("screenseeker.cli.init_db")
     @patch("screenseeker.cli.get_session")
     @patch("screenseeker.cli.enrichment.select_stale")
-    @patch("screenseeker.cli._build_enricher")
+    @patch("screenseeker.cli.build_enricher")
     @patch("screenseeker.cli.enrich_films")
     def test_reports_failures(
         self, mock_enrich, mock_build, mock_select, mock_session, mock_init, mock_cfg

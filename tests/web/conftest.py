@@ -63,7 +63,9 @@ def profile():
 
 @pytest.fixture
 def client(sessions, profile):
-    app = create_app()
+    # The runner outlives any request, so it gets the factory rather than the
+    # get_db override.
+    app = create_app(session_factory=sessions)
 
     def override_db():
         session = sessions()

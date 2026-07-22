@@ -11,14 +11,15 @@ One module until it earns splitting. Rules that hold throughout:
 """
 
 from math import ceil
-from typing import Annotated, Literal, NamedTuple, Optional
+from typing import Annotated, Literal, NamedTuple, Optional, get_args
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 
 from ..enrichers.watch_strategy import WatchOption, WatchStrategy
-from ..services import library
+from ..exceptions import JobAlreadyRunning
+from ..services import jobs, library
 from ..services.models import FilmDetail, OfferOut
 from ..services.watch import find_watch_options
 from .deps import get_db, get_profile, require_user
@@ -32,6 +33,12 @@ MAX_PER_PAGE = 96
 # FastAPI rejects anything outside this set with a 422 before it reaches the
 # query builder, so no user input ever selects an ORDER BY.
 SortKey = Literal["added", "title", "year", "rating"]
+
+# Same idea for job kinds: /jobs/sync and /jobs/refresh exist, nothing else.
+JobKind = Literal["sync", "refresh"]
+
+if set(get_args(JobKind)) != set(jobs.KINDS):
+    raise RuntimeError(f"job kinds disagree: routes {get_args(JobKind)}, service {jobs.KINDS}")
 
 SORT_LABELS: dict[str, str] = {
     "added": "Recently added",
@@ -130,8 +137,13 @@ def index(
         "sort_labels": SORT_LABELS,
     }
 
-    template = "partials/library.html" if is_htmx(request) else "index.html"
-    return render(request, template, context)
+    if is_htmx(request):
+        # Sorting and paging swap the library alone; the jobs bar sits outside
+        # it precisely so a running job's panel survives.
+        return render(request, "partials/library.html", context)
+
+    context["latest_job"] = jobs.latest(db)
+    return render(request, "index.html", context)
 
 
 @router.get("/film/{film_id}", response_class=HTMLResponse)
@@ -186,3 +198,58 @@ def toggle_watched(
         return render(request, "partials/card.html", {"film": updated})
 
     return RedirectResponse(url=f"/film/{film_id}", status_code=303)
+
+
+# ==============================================================================
+# Background jobs
+# ==============================================================================
+
+
+@router.post(
+    "/jobs/{kind}",
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_user)],
+)
+async def start_job(request: Request, kind: JobKind, db: DbSession) -> Response:
+    """
+    Enqueue a sync or refresh, or refuse because one is already running.
+
+    A refusal is a 409 carrying the running job's panel as its body, so the
+    page shows what is already in flight rather than a dead-end error. The
+    htmx-config meta in base.html is what makes that body swap.
+
+    Refusing is correctness, not politeness: two concurrent syncs race
+    get_or_create_film and produce duplicate films.
+    """
+    runner = request.app.state.job_runner
+
+    try:
+        job = await runner.submit(kind)
+    except JobAlreadyRunning as refusal:
+        running = jobs.get(db, refusal.job_id)
+        return render(
+            request,
+            "partials/job.html",
+            {"job": running, "refused": str(refusal)},
+            status_code=409,
+        )
+
+    if is_htmx(request):
+        return render(request, "partials/job.html", {"job": job})
+
+    return RedirectResponse(url="/", status_code=303)
+
+
+@router.get("/jobs/{job_id}", response_class=HTMLResponse)
+def job_status(request: Request, job_id: int, db: DbSession) -> HTMLResponse:
+    """
+    The status panel, polled by HTMX while the job is active.
+
+    The fragment stops asking for itself once the job reaches a terminal
+    state, so nothing needs to cancel the poll.
+    """
+    job = jobs.get(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="No such job.")
+
+    return render(request, "partials/job.html", {"job": job})

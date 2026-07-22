@@ -10,10 +10,14 @@ from typing import Callable, Optional
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
+from .. import settings
 from ..database.queries import get_or_create_film
+from ..exceptions import ConfigurationError
 from ..logger import get_logger
 from ..models import ScrapingResult
 from ..scrapers.base import BaseScraper
+from ..scrapers.html_scraper import HTMLScraper
+from ..user_config import get_letterboxd_username
 
 logger = get_logger(__name__)
 
@@ -43,6 +47,29 @@ class SyncReport(BaseModel):
     def year_coverage(self) -> float:
         """Percentage of scraped films that carried a year."""
         return (self.films_with_year / self.scraped * 100) if self.scraped else 0.0
+
+
+def build_scraper(cfg: dict) -> HTMLScraper:
+    """
+    Construct a Letterboxd scraper from the user's config.
+
+    ingest_watchlist still takes a scraper rather than building one, so tests
+    can pass a fake; this is only the bridge from config to the real thing,
+    shared by the CLI and the background runner.
+    """
+    username = get_letterboxd_username(cfg)
+    if not username:
+        raise ConfigurationError(
+            "Letterboxd username not configured. Run `screenseeker config init`."
+        )
+
+    return HTMLScraper(
+        base_url=f"https://letterboxd.com/{username}/watchlist/",
+        delay_between_requests=settings.HTML_DELAY_BETWEEN_REQUESTS,
+        timeout=settings.HTML_TIMEOUT,
+        save_raw_data=False,
+        output_dir=settings.OUTPUT_DIR,
+    )
 
 
 def ingest_watchlist(

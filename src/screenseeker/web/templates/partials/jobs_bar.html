@@ -1,0 +1,25 @@
+{#
+  Deliberately outside #library: sorting and paging swap that element, and a
+  running job's panel must survive it.
+#}
+<section class="jobs">
+  <div class="jobs__actions">
+    {# POST, and both declare require_user server-side. #}
+    <form method="post" action="/jobs/sync"
+          hx-post="/jobs/sync" hx-target="#job-panel" hx-swap="outerHTML">
+      <button type="submit">Sync watchlist</button>
+    </form>
+
+    <form method="post" action="/jobs/refresh"
+          hx-post="/jobs/refresh" hx-target="#job-panel" hx-swap="outerHTML">
+      <button type="submit">Refresh availability</button>
+    </form>
+  </div>
+
+  {% if latest_job %}
+    {% with job = latest_job %}{% include "partials/job.html" %}{% endwith %}
+  {% else %}
+    {# The swap target has to exist before the first job does. #}
+    <div id="job-panel" class="job job--idle"></div>
+  {% endif %}
+</section>

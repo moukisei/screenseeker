@@ -60,6 +60,41 @@ select, button {
 button { cursor: pointer; }
 button:hover { border-color: var(--muted); }
 
+/* --- Background jobs ---------------------------------------------------- */
+
+.jobs {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: .85rem 1rem;
+  margin-bottom: 1.5rem;
+  background: var(--panel);
+}
+.jobs__actions { display: flex; gap: .6rem; flex-wrap: wrap; }
+.jobs__actions form { margin: 0; }
+
+.job:not(.job--idle) { margin-top: .85rem; }
+.job__head { display: flex; gap: .6rem; align-items: baseline; margin: 0 0 .35rem; }
+.job__label { font-weight: 600; }
+.job__status { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.job--running .job__status { color: var(--warn); }
+.job--succeeded .job__status { color: var(--accent); }
+.job--failed .job__status { color: #f87171; }
+.job__message, .job__counts, .job__done { margin: .2rem 0; color: var(--muted); font-size: .85rem; }
+.job__refused { margin: 0 0 .5rem; color: var(--warn); font-size: .875rem; }
+.job__bar { width: 100%; height: .5rem; margin: .3rem 0; }
+.job__error {
+  margin: .5rem 0 0;
+  padding: .55rem .7rem;
+  background: #2a1a1a;
+  border: 1px solid #5b2b2b;
+  border-radius: var(--radius);
+  color: #fca5a5;
+  font-size: .78rem;
+  white-space: pre-wrap;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
 /* --- Grid --------------------------------------------------------------- */
 
 .grid {

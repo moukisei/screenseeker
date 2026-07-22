@@ -63,6 +63,20 @@ class FilmNotFoundError(DatabaseError):
         super().__init__(message)
 
 
+class JobAlreadyRunning(ScreenSeekerError):
+    """
+    Raised when a job of the same kind is already queued or running.
+
+    Not merely an abuse control: two concurrent syncs race get_or_create_film
+    and produce duplicate films.
+    """
+
+    def __init__(self, kind: str, job_id: int):
+        self.kind = kind
+        self.job_id = job_id
+        super().__init__(f"A {kind} job is already running (job {job_id}).")
+
+
 class ScraperError(ScreenSeekerError):
     """Raised when scraping operations fail."""
 

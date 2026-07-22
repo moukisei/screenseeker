@@ -14,7 +14,9 @@ from sqlalchemy.orm import Session
 from ..database.queries import get_stale_films
 from ..database.service import enrich_and_save_film
 from ..enrichers.tmdb_enricher import TMDBEnricher
+from ..exceptions import ConfigurationError
 from ..logger import get_logger
+from ..user_config import get_tmdb_api_key
 from .library import offer_counts
 from .models import FilmSummary
 
@@ -47,6 +49,28 @@ class EnrichmentReport(BaseModel):
     @property
     def all_succeeded(self) -> bool:
         return self.failed == 0
+
+
+def build_enricher(cfg: dict) -> TMDBEnricher:
+    """
+    Construct a TMDB client from the user's config.
+
+    Lives here rather than in the CLI because the background runner needs the
+    same object, and a second copy of this would be a second place for the key
+    lookup to drift.
+    """
+    api_key = get_tmdb_api_key(cfg)
+    if not api_key:
+        raise ConfigurationError(
+            "TMDB API key not configured. Run `screenseeker config init`, or set TMDB_API_KEY."
+        )
+
+    tmdb = cfg.get("tmdb", {})
+    return TMDBEnricher(
+        api_key=api_key,
+        rate_limit_per_second=tmdb.get("rate_limit", 5.0),
+        language=tmdb.get("language", "en-US"),
+    )
 
 
 def select_stale(

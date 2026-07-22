@@ -26,11 +26,11 @@ import click
 
 from . import config, settings, user_config
 from .database import get_session, init_db
-from .enrichers import TMDBEnricher
+from .exceptions import ConfigurationError
 from .logger import get_logger, setup_logger
-from .scrapers import HTMLScraper
 from .services import enrichment, ingest_watchlist
-from .services.enrichment import enrich_films
+from .services.enrichment import build_enricher, enrich_films
+from .services.sync import build_scraper
 
 setup_logger(level=config.LOG_LEVEL, log_to_file=config.LOG_TO_FILE, use_colors=True)
 logger = get_logger(__name__)
@@ -45,20 +45,19 @@ def _load_config_or_exit() -> dict:
         sys.exit(1)
 
 
-def _build_enricher(cfg: dict) -> TMDBEnricher:
-    """Construct a TMDB client, or stop if no key is configured."""
-    api_key = user_config.get_tmdb_api_key(cfg)
-    if not api_key:
-        click.secho("❌ TMDB API key not configured.", fg="red", bold=True)
-        click.echo("Run `screenseeker config init`, or set TMDB_API_KEY.")
-        sys.exit(1)
+def _build_or_exit(factory, cfg: dict):
+    """
+    Construct a scraper or enricher from config, or explain and stop.
 
-    tmdb = cfg.get("tmdb", {})
-    return TMDBEnricher(
-        api_key=api_key,
-        rate_limit_per_second=tmdb.get("rate_limit", 5.0),
-        language=tmdb.get("language", "en-US"),
-    )
+    The construction itself lives in `services` because the background job
+    runner needs the same objects; this only turns a ConfigurationError into
+    an exit code.
+    """
+    try:
+        return factory(cfg)
+    except ConfigurationError as e:
+        click.secho(f"❌ {e}", fg="red", bold=True)
+        sys.exit(1)
 
 
 @click.group()
@@ -196,23 +195,10 @@ def sync():
     fetched separately by `screenseeker refresh`.
     """
     cfg = _load_config_or_exit()
-
-    username = user_config.get_letterboxd_username(cfg)
-    if not username:
-        click.secho("❌ Letterboxd username not configured.", fg="red")
-        click.echo("Run `screenseeker config init` to set it up.")
-        sys.exit(1)
+    scraper = _build_or_exit(build_scraper, cfg)
 
     init_db()
-    click.echo(f"📡 Scraping {username}'s watchlist from Letterboxd...")
-
-    scraper = HTMLScraper(
-        base_url=f"https://letterboxd.com/{username}/watchlist/",
-        delay_between_requests=config.HTML_DELAY_BETWEEN_REQUESTS,
-        timeout=config.HTML_TIMEOUT,
-        save_raw_data=False,
-        output_dir=config.OUTPUT_DIR,
-    )
+    click.echo(f"📡 Scraping {user_config.get_letterboxd_username(cfg)}'s watchlist...")
 
     try:
         with scraper, get_session() as session:
@@ -286,7 +272,7 @@ def refresh(days, limit, dry_run, yes):
 
         click.echo()
         try:
-            with _build_enricher(cfg) as enricher:
+            with _build_or_exit(build_enricher, cfg) as enricher:
                 with click.progressbar(length=len(films), label="Refreshing") as bar:
                     report = enrich_films(
                         session,
