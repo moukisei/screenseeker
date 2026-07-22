@@ -1,0 +1,31 @@
+{#
+  One way to watch. `view` is an OptionView: the ranked option plus the logo
+  and deep link taken from the offer it came from. Both are optional - TMDB
+  does not supply a link for every provider.
+#}
+{% macro option_row(view) %}
+  {% set opt = view.option %}
+  <li class="option{% if opt.vpn_required %} option--vpn{% endif %}">
+    {% if view.logo %}
+      <img class="option__logo" src="{{ view.logo }}" alt="" width="46" height="46" loading="lazy">
+    {% else %}
+      <span class="option__logo option__logo--blank" aria-hidden="true"></span>
+    {% endif %}
+
+    <div class="option__text">
+      <p class="option__provider">
+        {% if view.url %}
+          <a href="{{ view.url }}" target="_blank" rel="noopener noreferrer">{{ opt.provider }}</a>
+        {% else %}
+          {{ opt.provider }}
+        {% endif %}
+        {%- if opt.via_bundle %} <span class="option__bundle">via {{ opt.via_bundle }}</span>{% endif %}
+      </p>
+      <p class="option__meta">
+        {{ opt.country_name or opt.country_code }}
+        · {{ opt.offer_type }}
+        {%- if opt.vpn_required %} · VPN needed{% endif %}
+      </p>
+    </div>
+  </li>
+{% endmacro %}

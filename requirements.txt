@@ -9,6 +9,12 @@ alembic>=1.18.0,<2.0.0
 click>=8.3.0,<9.0.0
 tomli-w>=1.0.0,<2.0.0
 
+# Web UI (`screenseeker serve`) - the [web] extra in pyproject.toml
+fastapi>=0.115.0,<1.0.0
+uvicorn[standard]>=0.32.0,<1.0.0
+jinja2>=3.1.0,<4.0.0
+python-multipart>=0.0.9,<1.0.0
+
 # Development dependencies
 ruff>=0.14.3,<0.15.0
 isort>=7.0.0,<8.0.0

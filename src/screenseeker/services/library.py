@@ -54,6 +54,56 @@ def _summarise(session: Session, films, limit: Optional[int] = None) -> list[Fil
     return [FilmSummary.from_film(f, offer_count=counts.get(f.id, 0)) for f in films]
 
 
+# Sort keys the grid may ask for, mapped to SQL. This dict is the whitelist -
+# a key that is not here falls back to the default rather than reaching the
+# query builder. Both title and year prefer the Letterboxd value, matching
+# Film.display_title / Film.display_year.
+_SORT_TITLE = func.coalesce(Film.letterboxd_title, Film.tmdb_title)
+_SORT_YEAR = func.coalesce(Film.letterboxd_year, Film.tmdb_year)
+
+# `col.is_(None)` sorts False before True, which puts unknown values last
+# instead of at the top of a descending sort.
+SORTS: dict[str, tuple] = {
+    "added": (Film.date_added.desc(),),
+    "title": (_SORT_TITLE.asc(),),
+    "year": (_SORT_YEAR.is_(None), _SORT_YEAR.desc()),
+    "rating": (Film.vote_average.is_(None), Film.vote_average.desc()),
+}
+DEFAULT_SORT = "added"
+
+
+def list_page(
+    session: Session,
+    *,
+    sort: str = DEFAULT_SORT,
+    page: int = 1,
+    per_page: int = 48,
+) -> tuple[list[FilmSummary], int]:
+    """
+    One page of the library, ordered and sliced in SQL.
+
+    Returns (page, total_films). Unlike list_by_provider, LIMIT and OFFSET are
+    pushed into the query rather than applied to a fully loaded list. Filtering
+    is deliberately absent - it arrives in Step 6 with the query builder that
+    replaces the single-axis helpers below.
+    """
+    order = SORTS.get(sort, SORTS[DEFAULT_SORT])
+
+    total = session.query(func.count(Film.id)).scalar() or 0
+
+    films = (
+        session.query(Film)
+        # Films sharing a sort value would otherwise be free to swap places
+        # between pages, so a row can appear twice or not at all.
+        .order_by(*order, Film.id.asc())
+        .limit(per_page)
+        .offset((page - 1) * per_page)
+        .all()
+    )
+
+    return _summarise(session, films), total
+
+
 def search(session: Session, query: str, limit: int = 10) -> list[FilmSummary]:
     """Partial, case-insensitive match on either the Letterboxd or TMDB title."""
     films = search_films_by_title(session, query, limit=limit)

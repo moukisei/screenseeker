@@ -28,6 +28,8 @@ web = [
     "fastapi (>=0.115.0,<1.0.0)",
     "uvicorn[standard] (>=0.32.0,<1.0.0)",
     "jinja2 (>=3.1.0,<4.0.0)",
+    # FastAPI parses form bodies through this; the watched toggle posts a form.
+    "python-multipart (>=0.0.9,<1.0.0)",
 ]
 
 [tool.poetry]

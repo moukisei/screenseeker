@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+
+{% block title %}Library · ScreenSeeker{% endblock %}
+
+{#
+  The whole library block - toolbar, grid and pagination - is one swappable
+  region. Sorting and paging return partials/library.html, which renders the
+  same #library element, so the controls always reflect the state they show.
+#}
+{% block content %}
+  {% include "partials/library.html" %}
+{% endblock %}

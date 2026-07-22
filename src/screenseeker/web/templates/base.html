@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}ScreenSeeker{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/app.css') }}">
+  {# Vendored rather than pulled from a CDN: the app is expected to run on a
+     machine that may have no route to the public internet. #}
+  <script src="{{ url_for('static', path='/htmx.min.js') }}" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">ScreenSeeker</a>
+    <p class="tagline">What can I watch tonight, on what I already pay for.</p>
+  </header>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

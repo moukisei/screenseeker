@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% from "partials/option.html" import option_row %}
+
+{% block title %}{{ film.full_title }} · ScreenSeeker{% endblock %}
+
+{% block content %}
+<article class="detail">
+
+  <p class="breadcrumb"><a href="/">← Library</a></p>
+
+  <div class="detail__head">
+    <div class="detail__poster">
+      {% if film.poster %}
+        <img src="{{ film.poster }}" alt="Poster for {{ film.title }}" width="342" height="513">
+      {% else %}
+        <span class="card__noposter">No poster</span>
+      {% endif %}
+    </div>
+
+    <div class="detail__facts">
+      <h1>{{ film.title }}</h1>
+      <p class="detail__meta">
+        {{ film.year or 'Year unknown' }}
+        {%- if film.vote_average %} · ★ {{ film.vote_average|rating }}{% endif %}
+        {%- if film.match_confidence %} · TMDB match: {{ film.match_confidence }}{% endif %}
+      </p>
+
+      {% if film.year_mismatch %}
+        {# Both years are kept so the mismatch can be shown rather than just flagged. #}
+        <p class="warn">
+          Letterboxd says {{ film.letterboxd_year or '?' }}, TMDB says {{ film.tmdb_year or '?' }}.
+          The streaming data below may be for the wrong film.
+        </p>
+      {% endif %}
+
+      {% if film.overview %}<p class="detail__overview">{{ film.overview }}</p>{% endif %}
+
+      <p class="detail__checked">{{ film.cache_age_days|days }}{% if film.is_stale %} · stale{% endif %}</p>
+
+      <form class="toggle" method="post" action="/film/{{ film.id }}/watched">
+        <input type="hidden" name="watched" value="{{ 'false' if film.watched else 'true' }}">
+        <button type="submit" class="toggle__button">
+          {{ 'Watched — mark unwatched' if film.watched else 'Mark watched' }}
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <section class="strategy">
+    <h2>How to watch</h2>
+
+    {% if best %}
+      <div class="strategy__block strategy__block--best">
+        <h3>Best option — in {{ base_country }}, no VPN</h3>
+        <ul class="options">{{ option_row(best) }}</ul>
+      </div>
+    {% endif %}
+
+    {% if vpn_options %}
+      <div class="strategy__block">
+        <h3>On your subscriptions, elsewhere</h3>
+        <ul class="options">
+          {% for view in vpn_options %}{{ option_row(view) }}{% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    {% if alternatives %}
+      <div class="strategy__block">
+        <h3>Rent or buy in {{ base_country }}</h3>
+        <ul class="options">
+          {% for view in alternatives %}{{ option_row(view) }}{% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    {% if not has_any_option %}
+      <p class="empty">
+        Nothing on anything you pay for
+        {%- if not_owned %}, but it streams elsewhere{% endif %}.
+        {% if film.last_checked is none %}This film has never been checked — run
+        <code>screenseeker refresh</code>.{% endif %}
+      </p>
+    {% endif %}
+
+    {% if not_owned %}
+      <details class="strategy__block">
+        <summary>Streaming, but not on a subscription you hold ({{ not_owned|length }})</summary>
+        <ul class="options">
+          {% for view in not_owned %}{{ option_row(view) }}{% endfor %}
+        </ul>
+      </details>
+    {% endif %}
+  </section>
+
+</article>
+{% endblock %}

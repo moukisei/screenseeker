@@ -1,0 +1,71 @@
+{#
+  Toolbar + grid + pagination. Rendered inside index.html on a full page load
+  and returned on its own to HTMX, so every control below swaps this element
+  by outerHTML and pushes the equivalent URL - a sorted, paged view stays
+  bookmarkable and the back button works.
+#}
+<div id="library" class="library">
+
+  <div class="toolbar">
+    <p class="count">
+      {{ total }} film{{ '' if total == 1 else 's' }}
+      {%- if pages > 1 %} · page {{ page }} of {{ pages }}{% endif %}
+    </p>
+
+    <form class="sort" action="/" method="get">
+      <label for="sort">Sort by</label>
+      <select id="sort" name="sort"
+              hx-get="/"
+              hx-target="#library"
+              hx-swap="outerHTML"
+              hx-push-url="true">
+        {% for key, label in sort_labels.items() %}
+          <option value="{{ key }}" {% if key == sort %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      {# Sorting resets to the first page; without JS the submit button applies it. #}
+      <noscript><button type="submit">Apply</button></noscript>
+    </form>
+  </div>
+
+  {% if films %}
+    <div class="grid">
+      {% for film in films %}
+        {% include "partials/card.html" %}
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="empty">
+      {% if total %}
+        Nothing on this page. <a href="/?sort={{ sort }}">Back to the start.</a>
+      {% else %}
+        Your library is empty. Run <code>screenseeker sync</code>, then
+        <code>screenseeker refresh</code>.
+      {% endif %}
+    </p>
+  {% endif %}
+
+  {% if pages > 1 %}
+    <nav class="pager" aria-label="Pagination">
+      {% set base = '/?sort=' ~ sort ~ '&per_page=' ~ per_page %}
+      {% if page > 1 %}
+        <a href="{{ base }}&page={{ page - 1 }}"
+           hx-get="{{ base }}&page={{ page - 1 }}"
+           hx-target="#library" hx-swap="outerHTML" hx-push-url="true">← Previous</a>
+      {% else %}
+        <span class="disabled">← Previous</span>
+      {% endif %}
+
+      <span class="pager__position">{{ page }} / {{ pages }}</span>
+
+      {% if page < pages %}
+        <a href="{{ base }}&page={{ page + 1 }}"
+           hx-get="{{ base }}&page={{ page + 1 }}"
+           hx-target="#library" hx-swap="outerHTML" hx-push-url="true">Next →</a>
+      {% else %}
+        <span class="disabled">Next →</span>
+      {% endif %}
+    </nav>
+  {% endif %}
+
+</div>
