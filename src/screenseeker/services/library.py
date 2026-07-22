@@ -7,9 +7,10 @@ never receive a detached ORM instance.
 
 from typing import Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
-from ..database.models import Film
+from ..database.models import Film, StreamingOffer
 from ..database.queries import (
     get_database_stats,
     get_film_by_title_year,
@@ -21,26 +22,47 @@ from ..database.queries import (
     search_films_by_title,
 )
 from ..logger import get_logger
-from .models import FilmSummary
+from .models import FilmDetail, FilmSummary
 
 logger = get_logger(__name__)
 
 
-def _summarise(films, limit: Optional[int] = None) -> list[FilmSummary]:
+def offer_counts(session: Session, film_ids: list[int]) -> dict[int, int]:
+    """
+    Count offers for many films in one query.
+
+    Reading film.streaming_offers per row costs one query each - 182 queries
+    for a 181-film library - and loads every offer row just to length them.
+    """
+    if not film_ids:
+        return {}
+
+    rows = (
+        session.query(StreamingOffer.film_id, func.count(StreamingOffer.id))
+        .filter(StreamingOffer.film_id.in_(film_ids))
+        .group_by(StreamingOffer.film_id)
+        .all()
+    )
+    return {row[0]: row[1] for row in rows}
+
+
+def _summarise(session: Session, films, limit: Optional[int] = None) -> list[FilmSummary]:
     if limit is not None:
         films = films[:limit]
-    return [FilmSummary.from_film(f) for f in films]
+
+    counts = offer_counts(session, [f.id for f in films])
+    return [FilmSummary.from_film(f, offer_count=counts.get(f.id, 0)) for f in films]
 
 
 def search(session: Session, query: str, limit: int = 10) -> list[FilmSummary]:
     """Partial, case-insensitive match on either the Letterboxd or TMDB title."""
     films = search_films_by_title(session, query, limit=limit)
-    return _summarise(films)
+    return _summarise(session, films)
 
 
 def list_unwatched(session: Session, limit: Optional[int] = None) -> list[FilmSummary]:
     """Films not yet marked as watched."""
-    return _summarise(get_unwatched_films(session), limit=limit)
+    return _summarise(session, get_unwatched_films(session), limit=limit)
 
 
 def count_unwatched(session: Session) -> int:
@@ -65,7 +87,7 @@ def list_by_provider(
     films = get_films_by_provider(
         session, provider, country_code=country, monetization_type=offer_type
     )
-    return _summarise(films, limit=limit), len(films)
+    return _summarise(session, films, limit=limit), len(films)
 
 
 def list_by_country(
@@ -76,23 +98,45 @@ def list_by_country(
 ) -> tuple[list[FilmSummary], int]:
     """Films with at least one offer in a country. Returns (selection, total)."""
     films = get_films_by_country(session, country, monetization_type=offer_type)
-    return _summarise(films, limit=limit), len(films)
+    return _summarise(session, films, limit=limit), len(films)
 
 
 def list_stale(session: Session, days: int = 7, limit: Optional[int] = None) -> list[FilmSummary]:
     """Films whose streaming data is older than `days`."""
-    return _summarise(get_stale_films(session, days=days), limit=limit)
+    return _summarise(session, get_stale_films(session, days=days), limit=limit)
 
 
 def get_by_id(session: Session, film_id: int) -> Optional[FilmSummary]:
-    """Single film by primary key, with offers eager-loaded for the count."""
+    """Single film by primary key. Counts offers without loading them."""
+    film = session.query(Film).filter(Film.id == film_id).first()
+    if not film:
+        return None
+
+    counts = offer_counts(session, [film.id])
+    return FilmSummary.from_film(film, offer_count=counts.get(film.id, 0))
+
+
+def get_detail(session: Session, film_id: int) -> Optional[FilmDetail]:
+    """
+    Single film with every offer, for the detail page.
+
+    Offers are eager-loaded here because the page renders them all; the grid
+    only needs a count and must not use this.
+    """
     film = (
         session.query(Film)
         .options(selectinload(Film.streaming_offers))
         .filter(Film.id == film_id)
         .first()
     )
-    return FilmSummary.from_film(film) if film else None
+    return FilmDetail.from_film(film) if film else None
+
+
+def _summarise_one(session: Session, film: Optional[Film]) -> Optional[FilmSummary]:
+    if not film:
+        return None
+    counts = offer_counts(session, [film.id])
+    return FilmSummary.from_film(film, offer_count=counts.get(film.id, 0))
 
 
 def set_watched(
@@ -108,16 +152,14 @@ def set_watched(
     if not film:
         return None
 
-    updated = mark_film_watched(session, film.id, watched=watched)
-    return FilmSummary.from_film(updated) if updated else None
+    return _summarise_one(session, mark_film_watched(session, film.id, watched=watched))
 
 
 def set_watched_by_id(
     session: Session, film_id: int, watched: bool = True
 ) -> Optional[FilmSummary]:
     """Mark a film watched or unwatched by primary key."""
-    film = mark_film_watched(session, film_id, watched=watched)
-    return FilmSummary.from_film(film) if film else None
+    return _summarise_one(session, mark_film_watched(session, film_id, watched=watched))
 
 
 def stats(session: Session) -> dict:

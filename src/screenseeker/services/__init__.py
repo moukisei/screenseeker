@@ -8,14 +8,16 @@ and the web layer are thin callers of these functions.
 
 from . import enrichment, library, profile, sync
 from .enrichment import EnrichmentReport, FilmError, enrich_films
-from .models import FilmSummary, WatchResult
+from .models import FilmDetail, FilmSummary, OfferOut, WatchResult, logo_url, poster_url
 from .sync import SyncReport, ingest_watchlist
 from .watch import find_watch_options, parse_query
 
 __all__ = [
     "EnrichmentReport",
+    "FilmDetail",
     "FilmError",
     "FilmSummary",
+    "OfferOut",
     "SyncReport",
     "WatchResult",
     "enrich_films",
@@ -23,7 +25,9 @@ __all__ = [
     "find_watch_options",
     "ingest_watchlist",
     "library",
+    "logo_url",
     "parse_query",
+    "poster_url",
     "profile",
     "sync",
 ]

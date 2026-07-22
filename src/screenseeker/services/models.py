@@ -11,9 +11,66 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .. import settings
 from ..database.models import Film
+from ..database.models import StreamingOffer as OfferRow
 from ..enrichers.enrichment_models import EnrichmentResult
 from ..enrichers.watch_strategy import WatchStrategy
+
+
+def poster_url(poster_path: Optional[str], size: str = settings.TMDB_POSTER_SIZE) -> Optional[str]:
+    """Turn a stored TMDB path into a full image URL."""
+    if not poster_path:
+        return None
+    return f"{settings.TMDB_IMAGE_BASE}/{size}{poster_path}"
+
+
+def logo_url(logo_path: Optional[str], size: str = settings.TMDB_LOGO_SIZE) -> Optional[str]:
+    """Turn a stored TMDB provider logo path into a full image URL."""
+    if not logo_path:
+        return None
+    return f"{settings.TMDB_IMAGE_BASE}/{size}{logo_path}"
+
+
+class OfferOut(BaseModel):
+    """
+    A streaming offer as the UI consumes it.
+
+    This is the only place the `monetization_type` column is translated to the
+    `offer_type` name used everywhere above the database. Do not map it at a
+    call site.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    country_code: str
+    country_name: str
+    provider_id: int
+    provider_name: str
+    offer_type: str = Field(..., description="flatrate / rent / buy / free / ads")
+
+    streaming_url: Optional[str] = None
+    logo_path: Optional[str] = Field(None, description="TMDB path, not a full URL")
+    display_priority: Optional[int] = None
+
+    @property
+    def logo(self) -> Optional[str]:
+        """Full URL for the provider logo."""
+        return logo_url(self.logo_path)
+
+    @classmethod
+    def from_row(cls, offer: OfferRow) -> "OfferOut":
+        """Build from an ORM row. Must be called while the session is open."""
+        return cls(
+            country_code=offer.country_code,
+            country_name=offer.country_name,
+            provider_id=offer.provider_id,
+            provider_name=offer.provider_name,
+            offer_type=offer.monetization_type,
+            streaming_url=offer.streaming_url,
+            logo_path=offer.logo_path,
+            display_priority=offer.display_priority,
+        )
 
 
 class FilmSummary(BaseModel):
@@ -43,13 +100,24 @@ class FilmSummary(BaseModel):
     last_checked: Optional[datetime] = None
     cache_age_days: Optional[int] = None
 
+    @property
+    def poster(self) -> Optional[str]:
+        """Full URL for the poster image."""
+        return poster_url(self.poster_path)
+
+    @property
+    def is_stale(self) -> bool:
+        """True when the streaming data has aged past the cache TTL."""
+        return self.cache_age_days is None or self.cache_age_days > settings.CACHE_TTL_DAYS
+
     @classmethod
     def from_film(cls, film: Film, *, offer_count: Optional[int] = None) -> "FilmSummary":
         """
         Build from an ORM row. Must be called while the session is open.
 
-        Pass offer_count explicitly to avoid lazy-loading the relationship per
-        row; omitting it reads film.streaming_offers.
+        Always pass offer_count in a list context. Omitting it reads
+        film.streaming_offers, which lazy-loads once per row - 182 queries for
+        a 181-film library.
         """
         last_checked = film.last_checked
         age_days = None
@@ -74,6 +142,51 @@ class FilmSummary(BaseModel):
             offer_count=offer_count if offer_count is not None else len(film.streaming_offers),
             last_checked=last_checked,
             cache_age_days=age_days,
+        )
+
+
+class FilmDetail(FilmSummary):
+    """A single film with its streaming offers, for the detail page."""
+
+    overview: Optional[str] = None
+    tmdb_release_date: Optional[str] = None
+    date_added: Optional[datetime] = None
+    notes: Optional[str] = None
+
+    offers: list[OfferOut] = Field(default_factory=list)
+
+    @property
+    def countries(self) -> list[str]:
+        """Distinct country codes, sorted."""
+        return sorted({o.country_code for o in self.offers})
+
+    @property
+    def providers(self) -> list[str]:
+        """Distinct provider names, sorted."""
+        return sorted({o.provider_name for o in self.offers})
+
+    def offers_in(self, country_code: str) -> list[OfferOut]:
+        """Offers for one country."""
+        return [o for o in self.offers if o.country_code == country_code]
+
+    @classmethod
+    def from_film(cls, film: Film, *, offer_count: Optional[int] = None) -> "FilmDetail":
+        """
+        Build from an ORM row with its offers loaded.
+
+        The caller is responsible for eager-loading film.streaming_offers;
+        this reads the relationship.
+        """
+        offers = [OfferOut.from_row(row) for row in film.streaming_offers]
+        summary = FilmSummary.from_film(film, offer_count=len(offers))
+
+        return cls(
+            **summary.model_dump(),
+            overview=film.overview,
+            tmdb_release_date=film.tmdb_release_date,
+            date_added=film.date_added,
+            notes=film.notes,
+            offers=offers,
         )
 
 

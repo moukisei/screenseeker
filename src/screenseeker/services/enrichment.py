@@ -16,6 +16,7 @@ from ..database.queries import get_stale_films
 from ..database.service import enrich_and_save_film
 from ..enrichers.tmdb_enricher import TMDBEnricher
 from ..logger import get_logger
+from .library import offer_counts
 from .models import FilmSummary
 
 logger = get_logger(__name__)
@@ -70,7 +71,8 @@ def select_all(session: Session, limit: Optional[int] = None) -> tuple[list[Film
     total = len(films)
     if limit:
         films = films[:limit]
-    return [FilmSummary.from_film(f) for f in films], total
+    counts = offer_counts(session, [f.id for f in films])
+    return [FilmSummary.from_film(f, offer_count=counts.get(f.id, 0)) for f in films], total
 
 
 def select_stale(
@@ -81,7 +83,8 @@ def select_stale(
     total = len(films)
     if limit:
         films = films[:limit]
-    return [FilmSummary.from_film(f) for f in films], total
+    counts = offer_counts(session, [f.id for f in films])
+    return [FilmSummary.from_film(f, offer_count=counts.get(f.id, 0)) for f in films], total
 
 
 def enrich_films(

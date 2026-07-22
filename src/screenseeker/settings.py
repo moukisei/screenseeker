@@ -76,6 +76,11 @@ CONFIG_PATH = Path(
 OUTPUT_DIR = _resolve_output_dir()
 SAVE_RAW_DATA = _env_flag("SAVE_RAW_DATA", True)
 
+# --- Caching -----------------------------------------------------------------
+
+# How long persisted streaming data stays fresh before a refresh is due.
+CACHE_TTL_DAYS = int(os.getenv("SCREENSEEKER_CACHE_TTL_DAYS", "7"))
+
 # --- SQLite ------------------------------------------------------------------
 
 # Milliseconds a blocked writer waits before giving up with "database is
@@ -99,6 +104,13 @@ HTML_TIMEOUT = int(os.getenv("HTML_TIMEOUT", "10"))
 # Overrides the value in config.toml when set, so a deployment can keep the key
 # out of a file on disk.
 TMDB_API_KEY_ENV = os.getenv("TMDB_API_KEY")
+
+# Only TMDB paths are stored; the UI builds full URLs from these. TMDB serves
+# the authoritative values from /configuration, but they change rarely enough
+# that hardcoded defaults are fine.
+TMDB_IMAGE_BASE = os.getenv("TMDB_IMAGE_BASE", "https://image.tmdb.org/t/p")
+TMDB_POSTER_SIZE = os.getenv("TMDB_POSTER_SIZE", "w342")
+TMDB_LOGO_SIZE = os.getenv("TMDB_LOGO_SIZE", "w92")
 
 # --- Logging -----------------------------------------------------------------
 
