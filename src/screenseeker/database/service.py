@@ -24,6 +24,42 @@ from .queries import (
 logger = get_logger(__name__)
 
 
+def _offer_to_row(offer) -> dict:
+    """
+    Map a Pydantic StreamingOffer to a `streaming_offers` row dict.
+
+    The Pydantic model calls the field `offer_type`; the column is
+    `monetization_type`. This function is the only place that translation
+    happens - do not inline it at call sites.
+    """
+    return {
+        "country_code": offer.country_code,
+        "country_name": offer.country_name,
+        "provider_id": offer.provider_id,
+        "provider_name": offer.provider_name,
+        "monetization_type": offer.offer_type,
+        "streaming_url": offer.streaming_url,
+        "logo_path": offer.logo_path,
+        "display_priority": offer.display_priority,
+    }
+
+
+def _apply_tmdb_fields(film: Film, tmdb_movie) -> None:
+    """
+    Copy TMDB movie data onto a Film row.
+
+    Shared by the create and update paths so a newly added TMDB field cannot
+    be persisted on one path and silently dropped on the other.
+    """
+    film.tmdb_id = tmdb_movie.tmdb_id
+    film.tmdb_title = tmdb_movie.title
+    film.tmdb_year = tmdb_movie.year
+    film.tmdb_release_date = tmdb_movie.release_date
+    film.poster_path = tmdb_movie.poster_path
+    film.overview = tmdb_movie.overview
+    film.vote_average = tmdb_movie.vote_average
+
+
 def enrich_and_save_film(
     session: Session,
     enricher: TMDBEnricher,
@@ -119,34 +155,19 @@ def create_film_from_enrichment(
     film = Film(
         letterboxd_title=letterboxd_title,
         letterboxd_year=letterboxd_year,
-        tmdb_id=tmdb_movie.tmdb_id,
-        tmdb_title=tmdb_movie.title,
-        tmdb_year=tmdb_movie.year,
-        tmdb_release_date=tmdb_movie.release_date,
         match_confidence=enrichment.match_confidence,
         year_mismatch=year_mismatch,
         date_added=datetime.now(UTC),
         last_checked=datetime.now(UTC),
     )
+    _apply_tmdb_fields(film, tmdb_movie)
 
     session.add(film)
     session.flush()  # Get the ID
 
     # Save streaming offers
     if enrichment.streaming_offers:
-        offers_data = [
-            {
-                "country_code": offer.country_code,
-                "country_name": offer.country_name,
-                "provider_id": offer.provider_id,
-                "provider_name": offer.provider_name,
-                "monetization_type": offer.offer_type,
-                "streaming_url": offer.streaming_url,
-                "logo_path": offer.logo_path,
-                "display_priority": offer.display_priority,
-            }
-            for offer in enrichment.streaming_offers
-        ]
+        offers_data = [_offer_to_row(offer) for offer in enrichment.streaming_offers]
 
         save_streaming_offers(session, film.id, offers_data)
 
@@ -191,10 +212,7 @@ def update_film_from_enrichment(session: Session, film: Film, enrichment: Enrich
             return film
 
     # Update TMDB data (might have changed or be newly added)
-    film.tmdb_id = tmdb_movie.tmdb_id
-    film.tmdb_title = tmdb_movie.title
-    film.tmdb_year = tmdb_movie.year
-    film.tmdb_release_date = tmdb_movie.release_date
+    _apply_tmdb_fields(film, tmdb_movie)
     film.match_confidence = enrichment.match_confidence
     film.last_checked = datetime.now(UTC)
 
@@ -206,19 +224,7 @@ def update_film_from_enrichment(session: Session, film: Film, enrichment: Enrich
 
     # Update streaming offers (delete old, insert new)
     if enrichment.streaming_offers:
-        offers_data = [
-            {
-                "country_code": offer.country_code,
-                "country_name": offer.country_name,
-                "provider_id": offer.provider_id,
-                "provider_name": offer.provider_name,
-                "monetization_type": offer.offer_type,
-                "streaming_url": offer.streaming_url,
-                "logo_path": offer.logo_path,
-                "display_priority": offer.display_priority,
-            }
-            for offer in enrichment.streaming_offers
-        ]
+        offers_data = [_offer_to_row(offer) for offer in enrichment.streaming_offers]
 
         save_streaming_offers(session, film.id, offers_data)
 

@@ -9,6 +9,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -48,6 +49,11 @@ class Film(Base):
     tmdb_release_date: Mapped[Optional[str]] = Column(
         String, nullable=True
     )  # Full date: YYYY-MM-DD
+
+    # TMDB presentation data (needed by the web UI, unused by the CLI)
+    poster_path: Mapped[Optional[str]] = Column(String, nullable=True)  # TMDB path, not a full URL
+    overview: Mapped[Optional[str]] = Column(Text, nullable=True)
+    vote_average: Mapped[Optional[float]] = Column(Float, nullable=True)
 
     # Match metadata
     match_confidence: Mapped[Optional[str]] = Column(
