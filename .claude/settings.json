@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ruff format:*)",
+      "Bash(git -C /Users/mouktarabdillahi/projects/screenseeker rm:*)"
+    ]
+  }
+}

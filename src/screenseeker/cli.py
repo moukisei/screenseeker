@@ -812,7 +812,10 @@ def search(query, limit):
                 click.echo(f"   📊 {len(film.streaming_offers)} streaming offers")
 
                 if film.last_checked:
-                    age = datetime.now(UTC) - film.last_checked
+                    last_checked = film.last_checked
+                    if last_checked.tzinfo is None:
+                        last_checked = last_checked.replace(tzinfo=UTC)
+                    age = datetime.now(UTC) - last_checked
                     if age.days > 7:
                         click.secho(f"   ⚠️  Data is {age.days} days old", fg="yellow")
 
@@ -1054,10 +1057,13 @@ def refresh(days, limit, dry_run):
         click.echo(f"\n🔄 Found {len(stale_films)} film(s) to refresh:\n")
 
         for film in stale_films:
+            _lc = film.last_checked
+            if _lc and _lc.tzinfo is None:
+                _lc = _lc.replace(tzinfo=UTC)
             age_str = (
                 "never checked"
                 if not film.last_checked
-                else f"{(datetime.now(UTC) - film.last_checked).days} days old"
+                else f"{(datetime.now(UTC) - _lc).days} days old"
             )
             click.echo(f"  • {film.full_title} ({age_str})")
 
@@ -1290,12 +1296,9 @@ def report(provider):
 
             if films:
                 # Show first 3
-                for film in films[:3]:
+                for film in films:
                     status = "✓" if film.watched else "☐"
                     click.echo(f"   {status} {film.full_title}")
-
-                if len(films) > 3:
-                    click.echo(f"   ... and {len(films) - 3} more")
 
             click.echo()
 
