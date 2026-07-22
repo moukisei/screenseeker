@@ -4,7 +4,10 @@
       "Bash(ruff format:*)",
       "Bash(git -C /Users/mouktarabdillahi/projects/screenseeker rm:*)",
       "Bash(git add *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python -m pytest -q)",
+      "Bash(.venv/bin/screenseeker enrich *)"
     ]
   }
 }

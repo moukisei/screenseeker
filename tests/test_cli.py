@@ -7,10 +7,9 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from screenseeker.cli import cli
-from screenseeker.database.models import Film
 from screenseeker.enrichers.enrichment_models import EnrichmentResult, TMDBMovieInfo
 from screenseeker.enrichers.watch_strategy import WatchStrategy
-from screenseeker.services import WatchResult
+from screenseeker.services import FilmSummary, WatchResult
 
 # Minimal valid config returned by user_config.load_config() in tests
 MOCK_CFG = {
@@ -181,18 +180,28 @@ class TestWatchCommand:
         assert "1999" in result.output or "Matrix" in result.output
 
 
+def make_summary(title="Test Movie", year=2020, **overrides):
+    """A FilmSummary as the service layer would return it."""
+    fields = {
+        "id": 1,
+        "title": title,
+        "year": year,
+        "full_title": f"{title} ({year})" if year else title,
+        "tmdb_id": 123,
+        "watched": False,
+    }
+    fields.update(overrides)
+    return FilmSummary(**fields)
+
+
 class TestSearchCommand:
     """Test search command."""
 
     @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.search_films_by_title")
+    @patch("screenseeker.cli.library.search")
     def test_search_with_query(self, mock_search, mock_session):
         """Test search command with query."""
-        mock_film = Film(
-            letterboxd_title="Test Movie",
-            letterboxd_year=2020,
-        )
-        mock_search.return_value = [mock_film]
+        mock_search.return_value = [make_summary()]
 
         runner = CliRunner()
         result = runner.invoke(cli, ["search", "Test"])
@@ -201,7 +210,7 @@ class TestSearchCommand:
         mock_search.assert_called_once()
 
     @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.search_films_by_title")
+    @patch("screenseeker.cli.library.search")
     def test_search_no_results(self, mock_search, mock_session):
         """Test search command with no results."""
         mock_search.return_value = []
@@ -217,46 +226,62 @@ class TestWatchlistCommand:
     """Test watchlist command."""
 
     @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.get_unwatched_films")
+    @patch("screenseeker.cli.library.list_unwatched")
     def test_watchlist_default(self, mock_get_films, mock_session):
         """Test watchlist command."""
-        mock_film = Film(
-            letterboxd_title="Test Movie",
-            letterboxd_year=2020,
-        )
-        mock_get_films.return_value = [mock_film]
+        mock_get_films.return_value = [make_summary()]
 
         runner = CliRunner()
         result = runner.invoke(cli, ["watchlist"])
 
         assert result.exit_code == 0
 
+    @patch("screenseeker.cli.get_session")
+    @patch("screenseeker.cli.library.count_unwatched")
+    def test_watchlist_count(self, mock_count, mock_session):
+        """--count prints just the number and skips the listing query."""
+        mock_count.return_value = 42
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["watchlist", "--count"])
+
+        assert result.exit_code == 0
+        assert "42" in result.output
+
 
 class TestWatchedCommand:
     """Test watched command."""
 
     @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.get_film_by_title_year")
-    @patch("screenseeker.cli.mark_film_watched")
-    def test_mark_film_watched(self, mock_mark, mock_get_film, mock_session):
+    @patch("screenseeker.cli.library.set_watched")
+    def test_mark_film_watched(self, mock_set, mock_session):
         """Test marking a film as watched."""
-        mock_film = Film(
-            letterboxd_title="Test Movie",
-            letterboxd_year=2020,
-        )
-        mock_get_film.return_value = mock_film
+        mock_set.return_value = make_summary(watched=True)
 
         runner = CliRunner()
         result = runner.invoke(cli, ["watched", "Test Movie", "--year", "2020"])
 
         assert result.exit_code == 0
-        mock_mark.assert_called_once()
+        mock_set.assert_called_once()
+        assert mock_set.call_args.kwargs["watched"] is True
 
     @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.get_film_by_title_year")
-    def test_watched_film_not_found(self, mock_get_film, mock_session):
+    @patch("screenseeker.cli.library.set_watched")
+    def test_unwatch_passes_false(self, mock_set, mock_session):
+        """--unwatch flips the flag rather than calling a different path."""
+        mock_set.return_value = make_summary()
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["watched", "Test Movie", "--unwatch"])
+
+        assert result.exit_code == 0
+        assert mock_set.call_args.kwargs["watched"] is False
+
+    @patch("screenseeker.cli.get_session")
+    @patch("screenseeker.cli.library.set_watched")
+    def test_watched_film_not_found(self, mock_set, mock_session):
         """Test watched command when film not found."""
-        mock_get_film.return_value = None
+        mock_set.return_value = None
 
         runner = CliRunner()
         result = runner.invoke(cli, ["watched", "Nonexistent Movie"])
@@ -304,7 +329,7 @@ class TestDbCommands:
         mock_reset.assert_called_once()
 
     @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.get_database_stats")
+    @patch("screenseeker.cli.library.stats")
     @patch("screenseeker.cli.init_db")
     def test_db_stats(self, mock_init, mock_stats, mock_session):
         """Test db stats command."""
@@ -331,23 +356,22 @@ class TestProvidersCommand:
     """Test providers command."""
 
     @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.get_films_by_provider")
-    def test_providers_with_provider_filter(self, mock_get_films, mock_session):
+    @patch("screenseeker.cli.library.list_by_provider")
+    def test_providers_with_provider_filter(self, mock_list, mock_session):
         """Test providers command with provider filter."""
-        mock_film = Film(letterboxd_title="Test Movie", letterboxd_year=2020)
-        mock_get_films.return_value = [mock_film]
+        mock_list.return_value = ([make_summary()], 1)
 
         runner = CliRunner()
         result = runner.invoke(cli, ["providers", "--provider", "Netflix"])
 
         assert result.exit_code == 0
-        mock_get_films.assert_called_once()
+        mock_list.assert_called_once()
 
     @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.get_films_by_provider")
-    def test_providers_no_results(self, mock_get_films, mock_session):
+    @patch("screenseeker.cli.library.list_by_provider")
+    def test_providers_no_results(self, mock_list, mock_session):
         """Test providers command with no results."""
-        mock_get_films.return_value = []
+        mock_list.return_value = ([], 0)
 
         runner = CliRunner()
         result = runner.invoke(cli, ["providers", "--provider", "Netflix"])
@@ -355,30 +379,42 @@ class TestProvidersCommand:
         assert result.exit_code == 0
         assert "No films found" in result.output
 
+    @patch("screenseeker.cli.get_session")
+    @patch("screenseeker.cli.library.list_by_provider")
+    def test_providers_reports_total_beyond_limit(self, mock_list, mock_session):
+        """The pre-limit total drives the "and N more" line."""
+        mock_list.return_value = ([make_summary()], 10)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["providers", "--provider", "Netflix", "--limit", "1"])
+
+        assert result.exit_code == 0
+        assert "Found 10 film(s)" in result.output
+        assert "and 9 more" in result.output
+
 
 class TestCountryCommand:
     """Test country command."""
 
     @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.get_films_by_country")
+    @patch("screenseeker.cli.library.list_by_country")
     @patch("screenseeker.cli.init_db")
-    def test_country_with_code(self, mock_init, mock_get_films, mock_session):
+    def test_country_with_code(self, mock_init, mock_list, mock_session):
         """Test country command with country code."""
-        mock_film = Film(letterboxd_title="Test Movie", letterboxd_year=2020)
-        mock_get_films.return_value = [mock_film]
+        mock_list.return_value = ([make_summary()], 1)
 
         runner = CliRunner()
         result = runner.invoke(cli, ["country", "--country", "US"])
 
         assert result.exit_code == 0
-        mock_get_films.assert_called_once()
+        mock_list.assert_called_once()
 
     @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.get_films_by_country")
+    @patch("screenseeker.cli.library.list_by_country")
     @patch("screenseeker.cli.init_db")
-    def test_country_no_results(self, mock_init, mock_get_films, mock_session):
+    def test_country_no_results(self, mock_init, mock_list, mock_session):
         """Test country command with no results."""
-        mock_get_films.return_value = []
+        mock_list.return_value = ([], 0)
 
         runner = CliRunner()
         result = runner.invoke(cli, ["country", "--country", "US"])
@@ -392,11 +428,11 @@ class TestRefreshCommand:
 
     @patch("screenseeker.cli.user_config.load_config", return_value=MOCK_CFG)
     @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.get_stale_films")
+    @patch("screenseeker.cli.enrichment.select_stale")
     @patch("screenseeker.cli.init_db")
-    def test_refresh_no_stale_films(self, mock_init, mock_get_stale, mock_session, mock_cfg):
+    def test_refresh_no_stale_films(self, mock_init, mock_select, mock_session, mock_cfg):
         """Test refresh command with no stale films."""
-        mock_get_stale.return_value = []
+        mock_select.return_value = ([], 0)
 
         runner = CliRunner()
         result = runner.invoke(cli, ["refresh"])
@@ -406,18 +442,33 @@ class TestRefreshCommand:
 
     @patch("screenseeker.cli.user_config.load_config", return_value=MOCK_CFG)
     @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.get_stale_films")
+    @patch("screenseeker.cli.enrichment.select_stale")
     @patch("screenseeker.cli.init_db")
-    def test_refresh_dry_run(self, mock_init, mock_get_stale, mock_session, mock_cfg):
+    def test_refresh_dry_run(self, mock_init, mock_select, mock_session, mock_cfg):
         """Test refresh command in dry-run mode."""
-        mock_film = Film(letterboxd_title="Test Movie", letterboxd_year=2020)
-        mock_get_stale.return_value = [mock_film]
+        mock_select.return_value = ([make_summary(cache_age_days=30)], 1)
 
         runner = CliRunner()
         result = runner.invoke(cli, ["refresh", "--dry-run"])
 
         assert result.exit_code == 0
         assert "dry run" in result.output.lower() or "would" in result.output.lower()
+
+    @patch("screenseeker.cli.user_config.load_config", return_value=MOCK_CFG)
+    @patch("screenseeker.cli.get_session")
+    @patch("screenseeker.cli.enrichment.select_stale")
+    @patch("screenseeker.cli.init_db")
+    def test_refresh_dry_run_shows_never_checked(
+        self, mock_init, mock_select, mock_session, mock_cfg
+    ):
+        """A film with no last_checked reads as never checked, not '0 days old'."""
+        mock_select.return_value = ([make_summary(cache_age_days=None)], 1)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["refresh", "--dry-run"])
+
+        assert result.exit_code == 0
+        assert "never checked" in result.output
 
 
 class TestEnrichCommand:

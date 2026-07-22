@@ -21,31 +21,19 @@ and tracking what you've watched.
 """
 
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 
 import click
 
 from . import config, user_config
 from .database import get_session, init_db
-from .database.models import Film
-from .database.queries import (
-    get_database_stats,
-    get_film_by_title_year,
-    get_films_by_country,
-    get_films_by_provider,
-    get_stale_films,
-    get_unwatched_films,
-    mark_film_watched,
-    search_films_by_title,
-)
-from .database.service import enrich_and_save_film
 from .database.session import get_database_info, reset_database
 from .enrichers import TMDBEnricher
 from .exporters import JSONExporter
 from .logger import get_logger, setup_logger
 from .scrapers import CSVScraper, HTMLScraper
-from .services import find_watch_options, parse_query
+from .services import enrichment, find_watch_options, ingest_watchlist, library, parse_query
+from .services.enrichment import enrich_films
 
 # Set up logging
 setup_logger(level=config.LOG_LEVEL, log_to_file=config.LOG_TO_FILE, use_colors=True)
@@ -251,62 +239,38 @@ def sync(method, csv_file, save_json):
 
     try:
         with scraper:
-            # Scrape
-            result = scraper.scrape()
+            click.echo("\n💾 Scraping and saving to database...")
 
-            if not result.success:
-                click.secho(f"❌ Scraping failed: {result.error_message}", fg="red")
+            with get_session() as session:
+                report = ingest_watchlist(session, scraper)
+
+            if not report.success:
+                click.secho(f"❌ Scraping failed: {report.error_message}", fg="red")
                 sys.exit(1)
 
-            if result.film_count == 0:
+            if report.scraped == 0:
                 click.secho("⚠️  No films found", fg="yellow")
                 return
 
-            # Display summary
-            click.secho(f"\n✅ Scraped {result.film_count} films", fg="green", bold=True)
-
-            # Save to database
-            click.echo("\n💾 Saving to database...")
-
-            with get_session() as session:
-                from .database.queries import get_or_create_film
-
-                added = 0
-                existing = 0
-
-                with click.progressbar(result.films, label="Importing") as films:
-                    for film_data in films:
-                        film, created = get_or_create_film(
-                            session, film_data.film_title, film_data.year
-                        )
-
-                        if created:
-                            added += 1
-                        else:
-                            existing += 1
-
-                session.commit()
-
+            click.secho(f"\n✅ Scraped {report.scraped} films", fg="green", bold=True)
             click.secho("\n✅ Database updated:", fg="green", bold=True)
-            click.echo(f"  • Added: {added} new films")
-            click.echo(f"  • Existing: {existing} films")
+            click.echo(f"  • Added: {report.added} new films")
+            click.echo(f"  • Existing: {report.existing} films")
 
             # Save to JSON
-            if save_json:
-                output_file = JSONExporter.export_to_default_location(result, config.OUTPUT_DIR)
+            if save_json and report.scraping_result is not None:
+                output_file = JSONExporter.export_to_default_location(
+                    report.scraping_result, config.OUTPUT_DIR
+                )
                 click.echo(f"  • JSON saved: {output_file}")
 
-            # Show stats
-            films_with_year = sum(1 for f in result.films if f.year is not None)
-            year_percentage = (
-                (films_with_year / result.film_count * 100) if result.film_count > 0 else 0
+            click.echo("\n📊 Statistics:")
+            click.echo(
+                f"  • Films with year: {report.films_with_year} ({report.year_coverage:.1f}%)"
             )
 
-            click.echo("\n📊 Statistics:")
-            click.echo(f"  • Films with year: {films_with_year} ({year_percentage:.1f}%)")
-
-            if result.source == "html":
-                click.echo(f"  • Pages scraped: {result.total_pages_scraped}")
+            if report.source == "html":
+                click.echo(f"  • Pages scraped: {report.pages_scraped}")
 
     except KeyboardInterrupt:
         click.echo("\n\nOperation cancelled by user")
@@ -371,7 +335,7 @@ def stats():
     init_db()
 
     with get_session() as session:
-        stats = get_database_stats(session)
+        stats = library.stats(session)
 
         click.echo("\n📊 Database Statistics:\n")
 
@@ -760,50 +724,46 @@ def search(query, limit):
     init_db()
 
     with get_session() as session:
-        results = search_films_by_title(session, query, limit=limit)
+        results = library.search(session, query, limit=limit)
 
-        if not results:
-            click.secho(f"No films found matching '{query}'", fg="yellow")
-            return
+    if not results:
+        click.secho(f"No films found matching '{query}'", fg="yellow")
+        return
 
-        click.echo(f"\n🔍 Found {len(results)} film(s) matching '{query}':\n")
+    click.echo(f"\n🔍 Found {len(results)} film(s) matching '{query}':\n")
 
-        for film in results:
-            # Title and year
-            click.secho(f"📽️  {film.full_title}", fg="cyan", bold=True)
+    for film in results:
+        # Title and year
+        click.secho(f"📽️  {film.full_title}", fg="cyan", bold=True)
 
-            # TMDB info
-            if film.tmdb_id:
-                click.echo(f"   TMDB ID: {film.tmdb_id} | Match: {film.match_confidence}")
-                if film.year_mismatch:
-                    click.secho(
-                        f"   ⚠️  Year mismatch: Letterboxd={film.letterboxd_year}, TMDB={film.tmdb_year}",
-                        fg="yellow",
-                    )
-            else:
-                click.secho("   ⚠️  Not enriched yet", fg="yellow")
+        # TMDB info
+        if film.tmdb_id:
+            click.echo(f"   TMDB ID: {film.tmdb_id} | Match: {film.match_confidence}")
+            if film.year_mismatch:
+                click.secho(
+                    f"   ⚠️  Year mismatch: Letterboxd={film.letterboxd_year}, "
+                    f"TMDB={film.tmdb_year}",
+                    fg="yellow",
+                )
+        else:
+            click.secho("   ⚠️  Not enriched yet", fg="yellow")
 
-            # Status
-            if film.watched:
-                click.secho("   ✓ Watched", fg="green")
-                if film.watched_at:
-                    click.echo(f"     on {film.watched_at.strftime('%Y-%m-%d')}")
-            else:
-                click.echo("   ☐ Unwatched")
+        # Status
+        if film.watched:
+            click.secho("   ✓ Watched", fg="green")
+            if film.watched_at:
+                click.echo(f"     on {film.watched_at.strftime('%Y-%m-%d')}")
+        else:
+            click.echo("   ☐ Unwatched")
 
-            # Streaming offers count
-            if film.streaming_offers:
-                click.echo(f"   📊 {len(film.streaming_offers)} streaming offers")
+        # Streaming offers count
+        if film.offer_count:
+            click.echo(f"   📊 {film.offer_count} streaming offers")
 
-                if film.last_checked:
-                    last_checked = film.last_checked
-                    if last_checked.tzinfo is None:
-                        last_checked = last_checked.replace(tzinfo=UTC)
-                    age = datetime.now(UTC) - last_checked
-                    if age.days > 7:
-                        click.secho(f"   ⚠️  Data is {age.days} days old", fg="yellow")
+            if film.cache_age_days is not None and film.cache_age_days > 7:
+                click.secho(f"   ⚠️  Data is {film.cache_age_days} days old", fg="yellow")
 
-            click.echo()
+        click.echo()
 
 
 @cli.command()
@@ -830,43 +790,41 @@ def providers(provider, country, offer_type, limit):
     init_db()
 
     with get_session() as session:
-        films = get_films_by_provider(
+        films, total = library.list_by_provider(
             session,
-            provider_name=provider,
-            country_code=country,
-            monetization_type=offer_type,
+            provider,
+            country=country,
+            offer_type=offer_type,
+            limit=limit,
         )
 
-        if not films:
-            msg = f"No films found on {provider}"
-            if country:
-                msg += f" in {country}"
-            if offer_type:
-                msg += f" ({offer_type})"
-            click.secho(msg, fg="yellow")
-            return
-
-        # Header
-        title = f"Films on {provider}"
+    if not films:
+        msg = f"No films found on {provider}"
         if country:
-            title += f" in {country}"
+            msg += f" in {country}"
         if offer_type:
-            title += f" ({offer_type})"
+            msg += f" ({offer_type})"
+        click.secho(msg, fg="yellow")
+        return
 
-        click.echo(f"\n📺 {title}:\n")
-        click.secho(f"Found {len(films)} film(s)", fg="green")
-        click.echo()
+    # Header
+    title = f"Films on {provider}"
+    if country:
+        title += f" in {country}"
+    if offer_type:
+        title += f" ({offer_type})"
 
-        # List films
-        display_films = films[:limit] if limit else films
+    click.echo(f"\n📺 {title}:\n")
+    click.secho(f"Found {total} film(s)", fg="green")
+    click.echo()
 
-        for i, film in enumerate(display_films, 1):
-            status = "✓" if film.watched else "☐"
-            click.echo(f"{i:3}. {status} {film.full_title}")
+    for i, film in enumerate(films, 1):
+        status = "✓" if film.watched else "☐"
+        click.echo(f"{i:3}. {status} {film.full_title}")
 
-        if limit and len(films) > limit:
-            click.echo(f"\n... and {len(films) - limit} more")
-            click.echo(f"Use --limit {len(films)} to see all")
+    if limit and total > limit:
+        click.echo(f"\n... and {total - limit} more")
+        click.echo(f"Use --limit {total} to see all")
 
 
 @cli.command()
@@ -890,22 +848,22 @@ def country(country, offer_type):
     init_db()
 
     with get_session() as session:
-        films = get_films_by_country(session, country, offer_type)
+        films, total = library.list_by_country(session, country, offer_type=offer_type)
 
-        if not films:
-            msg = f"No films found in {country}"
-            if offer_type:
-                msg += f" ({offer_type})"
-            click.secho(msg, fg="yellow")
-            return
+    if not films:
+        msg = f"No films found in {country}"
+        if offer_type:
+            msg += f" ({offer_type})"
+        click.secho(msg, fg="yellow")
+        return
 
-        click.echo(f"\n🌍 Films available in {country}:\n")
-        click.secho(f"Found {len(films)} film(s)", fg="green")
-        click.echo()
+    click.echo(f"\n🌍 Films available in {country}:\n")
+    click.secho(f"Found {total} film(s)", fg="green")
+    click.echo()
 
-        for i, film in enumerate(films, 1):
-            status = "✓" if film.watched else "☐"
-            click.echo(f"{i:3}. {status} {film.full_title}")
+    for i, film in enumerate(films, 1):
+        status = "✓" if film.watched else "☐"
+        click.echo(f"{i:3}. {status} {film.full_title}")
 
 
 # ==============================================================================
@@ -928,28 +886,28 @@ def watchlist(show_list, count):
     init_db()
 
     with get_session() as session:
-        films = get_unwatched_films(session)
-
         if count:
-            click.echo(f"{len(films)}")
+            click.echo(f"{library.count_unwatched(session)}")
             return
 
-        if not films:
-            click.secho("✅ No unwatched films! Time to add more to your watchlist.", fg="green")
-            return
+        films = library.list_unwatched(session)
 
-        click.echo(f"\n📋 Your Watchlist ({len(films)} unwatched films):\n")
+    if not films:
+        click.secho("✅ No unwatched films! Time to add more to your watchlist.", fg="green")
+        return
 
-        for i, film in enumerate(films, 1):
-            click.echo(f"{i:3}. {film.full_title}")
+    click.echo(f"\n📋 Your Watchlist ({len(films)} unwatched films):\n")
 
-            # Show if enriched
-            if not film.tmdb_id:
-                click.secho(
-                    f'     ⚠️  Not enriched yet - run: screenseeker watch "{film.full_title}"',
-                    fg="yellow",
-                    dim=True,
-                )
+    for i, film in enumerate(films, 1):
+        click.echo(f"{i:3}. {film.full_title}")
+
+        # Show if enriched
+        if not film.tmdb_id:
+            click.secho(
+                f'     ⚠️  Not enriched yet - run: screenseeker watch "{film.full_title}"',
+                fg="yellow",
+                dim=True,
+            )
 
 
 @cli.command()
@@ -969,25 +927,21 @@ def watched(title, year, unwatch):
     init_db()
 
     with get_session() as session:
-        film = get_film_by_title_year(session, title, year)
+        film = library.set_watched(session, title, year, watched=not unwatch)
 
-        if not film:
-            click.secho(f"❌ Film not found: {title} ({year or 'any year'})", fg="red")
-            click.echo("\n💡 Suggestions:")
-            click.echo(f'   • Try searching: screenseeker search "{title}"')
-            click.echo(f'   • Or enrich it first: screenseeker watch "{title}"')
-            if not year:
-                click.echo(f'   • Try adding the year: screenseeker watched "{title}" --year YYYY')
-            sys.exit(1)
+    if not film:
+        click.secho(f"❌ Film not found: {title} ({year or 'any year'})", fg="red")
+        click.echo("\n💡 Suggestions:")
+        click.echo(f'   • Try searching: screenseeker search "{title}"')
+        click.echo(f'   • Or enrich it first: screenseeker watch "{title}"')
+        if not year:
+            click.echo(f'   • Try adding the year: screenseeker watched "{title}" --year YYYY')
+        sys.exit(1)
 
-        # Mark watched/unwatched
-        mark_film_watched(session, film.id, watched=not unwatch)
-        session.commit()
-
-        if unwatch:
-            click.secho(f"☐ Marked '{film.full_title}' as unwatched", fg="yellow")
-        else:
-            click.secho(f"✓ Marked '{film.full_title}' as watched!", fg="green")
+    if unwatch:
+        click.secho(f"☐ Marked '{film.full_title}' as unwatched", fg="yellow")
+    else:
+        click.secho(f"✓ Marked '{film.full_title}' as watched!", fg="green")
 
 
 # ==============================================================================
@@ -1028,26 +982,19 @@ def refresh(days, limit, dry_run):
         sys.exit(1)
 
     with get_session() as session:
-        stale_films = get_stale_films(session, days=days)
+        stale_films, _ = enrichment.select_stale(session, days=days, limit=limit)
 
         if not stale_films:
             click.secho(f"✅ All films are fresh! (checked within {days} days)", fg="green")
             return
 
-        # Apply limit
-        if limit:
-            stale_films = stale_films[:limit]
-
         click.echo(f"\n🔄 Found {len(stale_films)} film(s) to refresh:\n")
 
         for film in stale_films:
-            _lc = film.last_checked
-            if _lc and _lc.tzinfo is None:
-                _lc = _lc.replace(tzinfo=UTC)
             age_str = (
                 "never checked"
-                if not film.last_checked
-                else f"{(datetime.now(UTC) - _lc).days} days old"
+                if film.cache_age_days is None
+                else f"{film.cache_age_days} days old"
             )
             click.echo(f"  • {film.full_title} ({age_str})")
 
@@ -1067,20 +1014,19 @@ def refresh(days, limit, dry_run):
             rate_limit_per_second=cfg.get("tmdb", {}).get("rate_limit", 5.0),
             language=cfg.get("tmdb", {}).get("language", "en-US"),
         ) as enricher:
-            with click.progressbar(stale_films, label="Refreshing") as films:
-                for film in films:
-                    try:
-                        enrich_and_save_film(
-                            session,
-                            enricher,
-                            film.letterboxd_title,
-                            film.letterboxd_year,
-                            force_refresh=True,
-                        )
-                    except Exception as e:
-                        click.echo(f"\n⚠️  Error refreshing {film.full_title}: {e}")
+            with click.progressbar(length=len(stale_films), label="Refreshing") as bar:
+                report = enrich_films(
+                    session,
+                    enricher,
+                    stale_films,
+                    force_refresh=True,
+                    on_progress=lambda done, total, title: bar.update(1),
+                )
 
-        click.secho(f"\n✅ Refreshed {len(stale_films)} film(s)!", fg="green")
+        for failure in report.errors:
+            click.echo(f"\n⚠️  Error refreshing {failure.title}: {failure.error}")
+
+        click.secho(f"\n✅ Refreshed {report.succeeded} film(s)!", fg="green")
 
 
 @cli.command()
@@ -1130,10 +1076,10 @@ def enrich(limit, unenriched_only, enrich_all, dry_run):
     with get_session() as session:
         # Get films to enrich
         if enrich_all:
-            films_to_enrich = session.query(Film).all()
+            films_to_enrich, total_found = enrichment.select_all(session, limit=limit)
             mode = "all"
         else:
-            films_to_enrich = session.query(Film).filter(Film.tmdb_id.is_(None)).all()
+            films_to_enrich, total_found = enrichment.select_unenriched(session, limit=limit)
             mode = "unenriched"
 
         if not films_to_enrich:
@@ -1144,11 +1090,6 @@ def enrich(limit, unenriched_only, enrich_all, dry_run):
                 click.secho("⚠️  No films found in database", fg="yellow")
                 click.echo("\nRun 'screenseeker sync' first to import your watchlist")
             return
-
-        # Apply limit
-        total_found = len(films_to_enrich)
-        if limit:
-            films_to_enrich = films_to_enrich[:limit]
 
         click.echo(f"\n🔍 Found {total_found} {mode} film(s)")
         if limit and total_found > limit:
@@ -1176,44 +1117,34 @@ def enrich(limit, unenriched_only, enrich_all, dry_run):
         # Enrich films
         click.echo()
 
-        success_count = 0
-        error_count = 0
-        errors = []
-
         with TMDBEnricher(
             api_key=api_key,
             rate_limit_per_second=cfg.get("tmdb", {}).get("rate_limit", 5.0),
             language=cfg.get("tmdb", {}).get("language", "en-US"),
         ) as enricher:
-            with click.progressbar(films_to_enrich, label="Enriching") as films:
-                for film in films:
-                    try:
-                        enrich_and_save_film(
-                            session,
-                            enricher,
-                            film.letterboxd_title,
-                            film.letterboxd_year,
-                            force_refresh=enrich_all,  # Force if enriching all
-                        )
-                        success_count += 1
-                    except Exception as e:
-                        error_count += 1
-                        errors.append((film.full_title, str(e)))
+            with click.progressbar(length=len(films_to_enrich), label="Enriching") as bar:
+                report = enrich_films(
+                    session,
+                    enricher,
+                    films_to_enrich,
+                    force_refresh=enrich_all,  # Force if enriching all
+                    on_progress=lambda done, total, title: bar.update(1),
+                )
 
         # Summary
         click.echo()
-        click.secho(f"✅ Successfully enriched: {success_count} film(s)", fg="green")
+        click.secho(f"✅ Successfully enriched: {report.succeeded} film(s)", fg="green")
 
-        if error_count > 0:
-            click.secho(f"⚠️  Errors: {error_count} film(s)", fg="yellow")
+        if report.failed > 0:
+            click.secho(f"⚠️  Errors: {report.failed} film(s)", fg="yellow")
             click.echo("\nFailed films:")
-            for title, error in errors[:5]:
-                click.echo(f"  • {title}: {error}")
-            if len(errors) > 5:
-                click.echo(f"  ... and {len(errors) - 5} more errors")
+            for failure in report.errors[:5]:
+                click.echo(f"  • {failure.title}: {failure.error}")
+            if report.failed > 5:
+                click.echo(f"  ... and {report.failed - 5} more errors")
 
         # Show what to do next
-        if success_count > 0:
+        if report.succeeded > 0:
             click.echo("\n💡 Next steps:")
             click.echo("  • View your films: screenseeker search <title>")
             click.echo("  • Check availability: screenseeker report")
@@ -1267,24 +1198,25 @@ def report(provider):
     click.echo(f"\n📊 Availability Report ({base_country}):\n")
 
     with get_session() as session:
-        for provider_name in providers:
-            films = get_films_by_provider(
+        by_provider = {
+            provider_name: library.list_by_provider(
                 session,
-                provider_name=provider_name,
-                country_code=base_country,
-                monetization_type="flatrate",
+                provider_name,
+                country=base_country,
+                offer_type="flatrate",
             )
+            for provider_name in providers
+        }
 
-            click.secho(f"📺 {provider_name}", fg="cyan", bold=True)
-            click.echo(f"   {len(films)} film(s) available")
+    for provider_name, (films, total) in by_provider.items():
+        click.secho(f"📺 {provider_name}", fg="cyan", bold=True)
+        click.echo(f"   {total} film(s) available")
 
-            if films:
-                # Show first 3
-                for film in films:
-                    status = "✓" if film.watched else "☐"
-                    click.echo(f"   {status} {film.full_title}")
+        for film in films:
+            status = "✓" if film.watched else "☐"
+            click.echo(f"   {status} {film.full_title}")
 
-            click.echo()
+        click.echo()
 
 
 # ==============================================================================
