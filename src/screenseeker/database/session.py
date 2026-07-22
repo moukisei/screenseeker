@@ -2,30 +2,64 @@
 Database session management and engine setup.
 """
 
+import sqlite3
 from contextlib import contextmanager
-from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from .. import settings
 from ..logger import get_logger
 from .models import Base
 
 logger = get_logger(__name__)
 
-# Database configuration
-# Go up from src/screenseeker/database/ to project root, then into data/
-DATABASE_DIR = Path(__file__).parent.parent.parent.parent / "data"
-DATABASE_PATH = DATABASE_DIR / "screenseeker.db"
-DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
+# Resolved in settings.py from the environment, with a fallback to the legacy
+# in-checkout location so an existing database is not orphaned.
+DATABASE_DIR = settings.DB_DIR
+DATABASE_PATH = settings.DB_PATH
+DATABASE_URL = settings.DATABASE_URL
 
-# Create engine
-# echo=False for production, set to True for SQL debugging
-engine = create_engine(
-    DATABASE_URL,
-    echo=False,
-    connect_args={"check_same_thread": False},  # Allow SQLite to be used in multiple threads
-)
+
+@event.listens_for(Engine, "connect")
+def _configure_sqlite_connection(dbapi_connection, connection_record):
+    """
+    Apply the pragmas SQLite needs to behave under a server.
+
+    Registered against the Engine class rather than one instance so every
+    engine gets them - the app's, the test fixtures', and the web layer's.
+
+    - WAL lets readers run alongside a single writer instead of blocking.
+    - busy_timeout makes a blocked writer wait instead of failing instantly
+      with "database is locked".
+    - foreign_keys is OFF by default in SQLite, which means the ON DELETE
+      CASCADE declared on streaming_offers.film_id was never enforced.
+      Deleting a film orphaned its offers.
+    """
+    if not isinstance(dbapi_connection, sqlite3.Connection):
+        return
+
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute(f"PRAGMA busy_timeout={settings.SQLITE_BUSY_TIMEOUT_MS}")
+        cursor.execute("PRAGMA foreign_keys=ON")
+    finally:
+        cursor.close()
+
+
+def create_db_engine(url: str = DATABASE_URL, echo: bool = False):
+    """Build an engine with the connection arguments SQLite needs."""
+    return create_engine(
+        url,
+        echo=echo,
+        # Allow SQLite to be used from more than one thread.
+        connect_args={"check_same_thread": False},
+    )
+
+
+engine = create_db_engine(DATABASE_URL)
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -104,8 +138,18 @@ def get_database_info() -> dict:
     }
 
     if db_exists:
-        # Get file size
-        size_bytes = DATABASE_PATH.stat().st_size
+        # In WAL mode recent writes live in the -wal sidecar until a
+        # checkpoint, so the main file alone understates the real size - a
+        # freshly created database reports 0 bytes.
+        size_bytes = sum(
+            path.stat().st_size
+            for path in (
+                DATABASE_PATH,
+                DATABASE_PATH.with_name(DATABASE_PATH.name + "-wal"),
+                DATABASE_PATH.with_name(DATABASE_PATH.name + "-shm"),
+            )
+            if path.exists()
+        )
         size_mb = size_bytes / (1024 * 1024)
         info["size_bytes"] = size_bytes
         info["size_mb"] = round(size_mb, 2)

@@ -113,7 +113,7 @@ def watch(title, year, force):
         click.secho(f"❌ {e}", fg="red")
         sys.exit(1)
 
-    api_key = cfg.get("tmdb", {}).get("api_key", "")
+    api_key = user_config.get_tmdb_api_key(cfg)
     if not api_key:
         click.secho("❌ TMDB API key not configured.", fg="red", bold=True)
         click.echo("Run `screenseeker config init` to get started.")
@@ -975,7 +975,7 @@ def refresh(days, limit, dry_run):
         click.secho(f"❌ {e}", fg="red")
         sys.exit(1)
 
-    api_key = cfg.get("tmdb", {}).get("api_key", "")
+    api_key = user_config.get_tmdb_api_key(cfg)
     if not api_key:
         click.secho("❌ TMDB API key not configured.", fg="red", bold=True)
         click.echo("Run `screenseeker config init` to get started.")
@@ -1067,7 +1067,7 @@ def enrich(limit, unenriched_only, enrich_all, dry_run):
         click.secho(f"❌ {e}", fg="red")
         sys.exit(1)
 
-    api_key = cfg.get("tmdb", {}).get("api_key", "")
+    api_key = user_config.get_tmdb_api_key(cfg)
     if not api_key:
         click.secho("❌ TMDB API key not configured.", fg="red", bold=True)
         click.echo("Run `screenseeker config init` to get started.")
