@@ -167,16 +167,37 @@ class FilmDetail(FilmSummary):
         """Offers for one country."""
         return [o for o in self.offers if o.country_code == country_code]
 
-    @classmethod
-    def from_film(cls, film: Film, *, offer_count: Optional[int] = None) -> "FilmDetail":
+    @property
+    def is_scoped(self) -> bool:
         """
-        Build from an ORM row with its offers loaded.
+        True when `offers` holds fewer than the film really has.
 
-        The caller is responsible for eager-loading film.streaming_offers;
-        this reads the relationship.
+        The detail page loads only the countries the user can reach; without
+        this the page would silently claim to show everything.
         """
-        offers = [OfferOut.from_row(row) for row in film.streaming_offers]
-        summary = FilmSummary.from_film(film, offer_count=len(offers))
+        return len(self.offers) < self.offer_count
+
+    @classmethod
+    def from_film(
+        cls,
+        film: Film,
+        *,
+        offers: Optional[list[OfferRow]] = None,
+        offer_count: Optional[int] = None,
+    ) -> "FilmDetail":
+        """
+        Build from an ORM row and the offer rows to display.
+
+        `offers` is passed in rather than read off film.streaming_offers so the
+        caller can scope the query; omitting it reads the relationship, which
+        lazy-loads every offer the film has. `offer_count` is the unscoped
+        total and defaults to the number displayed.
+        """
+        rows = film.streaming_offers if offers is None else offers
+        out = [OfferOut.from_row(row) for row in rows]
+        summary = FilmSummary.from_film(
+            film, offer_count=offer_count if offer_count is not None else len(out)
+        )
 
         return cls(
             **summary.model_dump(),
@@ -184,5 +205,5 @@ class FilmDetail(FilmSummary):
             tmdb_release_date=film.tmdb_release_date,
             date_added=film.date_added,
             notes=film.notes,
-            offers=offers,
+            offers=out,
         )

@@ -1,30 +1,62 @@
 """
 Read and update the local film library.
 
-Every function serialises to FilmSummary while the session is open, so callers
-never receive a detached ORM instance.
+This is the only module that queries films for display. The single-axis
+helpers it replaced (`get_films_by_provider`, `get_films_by_country`) could not
+be combined and applied their limit in Python; `list_films` pushes filtering,
+sorting and slicing into one query.
+
+Every function serialises to FilmSummary or FilmDetail while the session is
+open, so callers never receive a detached ORM instance.
 """
 
+from datetime import UTC, datetime
 from typing import Optional
 
-from sqlalchemy import func
-from sqlalchemy.orm import Session, selectinload
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy import case, distinct, func, or_, select
+from sqlalchemy.orm import Session
 
 from ..database.models import Film, StreamingOffer
-from ..database.queries import (
-    get_database_stats,
-    get_film_by_title_year,
-    get_films_by_country,
-    get_films_by_provider,
-    get_stale_films,
-    get_unwatched_films,
-    mark_film_watched,
-    search_films_by_title,
-)
 from ..logger import get_logger
 from .models import FilmDetail, FilmSummary
 
 logger = get_logger(__name__)
+
+
+# ==============================================================================
+# Film row primitives
+#
+# These return ORM instances and exist for the write paths in sync.py and
+# enrichment.py. Nothing above the service layer may call them.
+# ==============================================================================
+
+
+def get_or_create_film(
+    session: Session, title: str, year: Optional[int] = None
+) -> tuple[Film, bool]:
+    """
+    Find a film by Letterboxd title and year, or add it.
+
+    Returns (film, created). Two callers running this concurrently produce
+    duplicates, which is why sync and refresh are guarded by the single-flight
+    index on the jobs table.
+    """
+    query = session.query(Film).filter(Film.letterboxd_title == title)
+    if year is not None:
+        query = query.filter(Film.letterboxd_year == year)
+
+    film = query.first()
+    if film:
+        logger.debug(f"Found existing film: {film.full_title} (ID: {film.id})")
+        return film, False
+
+    film = Film(letterboxd_title=title, letterboxd_year=year, date_added=datetime.now(UTC))
+    session.add(film)
+    session.flush()  # Assign the ID without committing.
+
+    logger.info(f"Created new film: {film.full_title} (ID: {film.id})")
+    return film, True
 
 
 def offer_counts(session: Session, film_ids: list[int]) -> dict[int, int]:
@@ -46,20 +78,64 @@ def offer_counts(session: Session, film_ids: list[int]) -> dict[int, int]:
     return {row[0]: row[1] for row in rows}
 
 
-def _summarise(session: Session, films, limit: Optional[int] = None) -> list[FilmSummary]:
-    if limit is not None:
-        films = films[:limit]
+# ==============================================================================
+# Listing: one builder, one query
+# ==============================================================================
 
-    counts = offer_counts(session, [f.id for f in films])
-    return [FilmSummary.from_film(f, offer_count=counts.get(f.id, 0)) for f in films]
+
+class LibraryFilter(BaseModel):
+    """
+    What the grid is showing.
+
+    Every field is optional and they compose. Combining them is what the CLI
+    structurally could not do.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    provider: Optional[str] = None
+    country: Optional[str] = None
+    offer_type: Optional[str] = None
+    watched: Optional[bool] = None
+
+    @property
+    def is_active(self) -> bool:
+        """True when anything is being narrowed."""
+        return any(v is not None and v != "" for v in self.model_dump().values())
+
+    def as_params(self) -> dict:
+        """
+        The filter as URL query parameters, omitting what is not set.
+
+        Views are bookmarkable, so the URL is the state; this is the one place
+        that mapping is written down.
+        """
+        params: dict[str, str] = {}
+        if self.provider:
+            params["provider"] = self.provider
+        if self.country:
+            params["country"] = self.country
+        if self.offer_type:
+            params["offer_type"] = self.offer_type
+        if self.watched is not None:
+            params["watched"] = "true" if self.watched else "false"
+        return params
 
 
 # Sort keys the grid may ask for, mapped to SQL. This dict is the whitelist -
 # a key that is not here falls back to the default rather than reaching the
-# query builder. Both title and year prefer the Letterboxd value, matching
+# query builder. Title and year prefer the Letterboxd value, matching
 # Film.display_title / Film.display_year.
 _SORT_TITLE = func.coalesce(Film.letterboxd_title, Film.tmdb_title)
 _SORT_YEAR = func.coalesce(Film.letterboxd_year, Film.tmdb_year)
+
+# Confidence is an ordered scale stored as text, so alphabetical sorting would
+# put "exact" after "duplicate" and "high" before "low". Rank it explicitly.
+_SORT_CONFIDENCE = case(
+    {"exact": 0, "high": 1, "medium": 2, "low": 3, "duplicate": 4, "none": 5},
+    value=Film.match_confidence,
+    else_=6,
+)
 
 # `col.is_(None)` sorts False before True, which puts unknown values last
 # instead of at the top of a descending sort.
@@ -68,31 +144,81 @@ SORTS: dict[str, tuple] = {
     "title": (_SORT_TITLE.asc(),),
     "year": (_SORT_YEAR.is_(None), _SORT_YEAR.desc()),
     "rating": (Film.vote_average.is_(None), Film.vote_average.desc()),
+    "confidence": (_SORT_CONFIDENCE.asc(),),
 }
 DEFAULT_SORT = "added"
 
 
-def list_page(
+def _offer_predicate(filters: LibraryFilter):
+    """
+    One correlated EXISTS over streaming_offers, covering every offer axis.
+
+    All three conditions must hold for the *same* offer row. Three independent
+    EXISTS clauses would match a film that streams on Netflix in the US and
+    happens to be rentable in France on "unwatched, Netflix, FR" - which is
+    the wrong answer to the only question this app asks.
+
+    EXISTS rather than a JOIN because a join multiplies rows, and DISTINCT to
+    undo that breaks LIMIT and ORDER BY.
+    """
+    conditions: list = []
+
+    if filters.provider:
+        # Substring match: TMDB names providers "Netflix basic with Ads",
+        # "Amazon Prime Video", and so on.
+        conditions.append(StreamingOffer.provider_name.ilike(f"%{filters.provider}%"))
+    if filters.country:
+        conditions.append(StreamingOffer.country_code == filters.country.upper())
+    if filters.offer_type:
+        conditions.append(StreamingOffer.monetization_type == filters.offer_type)
+
+    if not conditions:
+        return None
+
+    return select(StreamingOffer.id).where(StreamingOffer.film_id == Film.id, *conditions).exists()
+
+
+def _narrow(query, filters: LibraryFilter):
+    """Apply every active filter. Shared by the count and the page."""
+    if filters.watched is True:
+        query = query.filter(Film.watched.is_(True))
+    elif filters.watched is False:
+        # Legacy rows could carry NULL rather than 0; both mean unwatched.
+        query = query.filter(or_(Film.watched.is_(False), Film.watched.is_(None)))
+
+    predicate = _offer_predicate(filters)
+    if predicate is not None:
+        query = query.filter(predicate)
+
+    return query
+
+
+def _summarise(session: Session, films: list[Film]) -> list[FilmSummary]:
+    counts = offer_counts(session, [f.id for f in films])
+    return [FilmSummary.from_film(f, offer_count=counts.get(f.id, 0)) for f in films]
+
+
+def list_films(
     session: Session,
     *,
+    filters: Optional[LibraryFilter] = None,
     sort: str = DEFAULT_SORT,
     page: int = 1,
     per_page: int = 48,
 ) -> tuple[list[FilmSummary], int]:
     """
-    One page of the library, ordered and sliced in SQL.
+    One page of the library, filtered, ordered and sliced in SQL.
 
-    Returns (page, total_films). Unlike list_by_provider, LIMIT and OFFSET are
-    pushed into the query rather than applied to a fully loaded list. Filtering
-    is deliberately absent - it arrives in Step 6 with the query builder that
-    replaces the single-axis helpers below.
+    Returns (page, total_matching). "unwatched, on Netflix, available in FR"
+    is one call and one query over films.
     """
+    filters = filters or LibraryFilter()
     order = SORTS.get(sort, SORTS[DEFAULT_SORT])
 
-    total = session.query(func.count(Film.id)).scalar() or 0
+    total = _narrow(session.query(func.count(Film.id)), filters).scalar() or 0
 
     films = (
-        session.query(Film)
+        _narrow(session.query(Film), filters)
         # Films sharing a sort value would otherwise be free to swap places
         # between pages, so a row can appear twice or not at all.
         .order_by(*order, Film.id.asc())
@@ -104,114 +230,102 @@ def list_page(
     return _summarise(session, films), total
 
 
-def search(session: Session, query: str, limit: int = 10) -> list[FilmSummary]:
-    """Partial, case-insensitive match on either the Letterboxd or TMDB title."""
-    films = search_films_by_title(session, query, limit=limit)
-    return _summarise(session, films)
+class Facets(BaseModel):
+    """The values a filter can usefully take, read from what is stored."""
+
+    model_config = ConfigDict(frozen=True)
+
+    providers: list[str] = []
+    countries: list[str] = []
+    offer_types: list[str] = []
 
 
-def list_unwatched(session: Session, limit: Optional[int] = None) -> list[FilmSummary]:
-    """Films not yet marked as watched."""
-    return _summarise(session, get_unwatched_films(session), limit=limit)
-
-
-def count_unwatched(session: Session) -> int:
-    """Cheaper than len(list_unwatched) - counts in SQL."""
-    return session.query(Film).filter(~Film.watched).count()
-
-
-def list_by_provider(
-    session: Session,
-    provider: str,
-    country: Optional[str] = None,
-    offer_type: Optional[str] = None,
-    limit: Optional[int] = None,
-) -> tuple[list[FilmSummary], int]:
+def facets(session: Session) -> Facets:
     """
-    Films with at least one offer from a provider, optionally narrowed.
+    Distinct providers, countries and offer types across every stored offer.
 
-    Returns (selection, total_matched). The limit is applied in Python, not
-    SQL - the underlying query has no LIMIT. Step 6 replaces this with a
-    composable builder that pushes both down to the database.
+    Three cheap queries against indexed columns. Deliberately not filtered by
+    the current selection: a dropdown that hides the option you need because
+    of the option you already picked is worse than one that returns nothing.
     """
-    films = get_films_by_provider(
-        session, provider, country_code=country, monetization_type=offer_type
+    return Facets(
+        providers=sorted(r[0] for r in session.query(distinct(StreamingOffer.provider_name)).all()),
+        countries=sorted(r[0] for r in session.query(distinct(StreamingOffer.country_code)).all()),
+        offer_types=sorted(
+            r[0] for r in session.query(distinct(StreamingOffer.monetization_type)).all()
+        ),
     )
-    return _summarise(session, films, limit=limit), len(films)
 
 
-def list_by_country(
-    session: Session,
-    country: str,
-    offer_type: Optional[str] = None,
-    limit: Optional[int] = None,
-) -> tuple[list[FilmSummary], int]:
-    """Films with at least one offer in a country. Returns (selection, total)."""
-    films = get_films_by_country(session, country, monetization_type=offer_type)
-    return _summarise(session, films, limit=limit), len(films)
+# ==============================================================================
+# One film
+# ==============================================================================
 
 
-def list_stale(session: Session, days: int = 7, limit: Optional[int] = None) -> list[FilmSummary]:
-    """Films whose streaming data is older than `days`."""
-    return _summarise(session, get_stale_films(session, days=days), limit=limit)
+def get_detail(
+    session: Session, film_id: int, *, countries: Optional[list[str]] = None
+) -> Optional[FilmDetail]:
+    """
+    Single film with its offers, for the detail page.
 
-
-def get_by_id(session: Session, film_id: int) -> Optional[FilmSummary]:
-    """Single film by primary key. Counts offers without loading them."""
+    `countries` scopes which offers are loaded. TMDB returns availability for
+    every country it knows - one film in this library has 668 offers, and the
+    600-odd in countries the user can neither reach nor VPN into are weight on
+    every render for no information. The unscoped total is still reported, so
+    the page can say it is showing a subset.
+    """
     film = session.query(Film).filter(Film.id == film_id).first()
     if not film:
         return None
 
-    counts = offer_counts(session, [film.id])
-    return FilmSummary.from_film(film, offer_count=counts.get(film.id, 0))
+    query = session.query(StreamingOffer).filter(StreamingOffer.film_id == film_id)
+    if countries:
+        query = query.filter(StreamingOffer.country_code.in_([c.upper() for c in countries]))
 
+    total_offers = offer_counts(session, [film_id]).get(film_id, 0)
 
-def get_detail(session: Session, film_id: int) -> Optional[FilmDetail]:
-    """
-    Single film with every offer, for the detail page.
-
-    Offers are eager-loaded here because the page renders them all; the grid
-    only needs a count and must not use this.
-    """
-    film = (
-        session.query(Film)
-        .options(selectinload(Film.streaming_offers))
-        .filter(Film.id == film_id)
-        .first()
-    )
-    return FilmDetail.from_film(film) if film else None
-
-
-def _summarise_one(session: Session, film: Optional[Film]) -> Optional[FilmSummary]:
-    if not film:
-        return None
-    counts = offer_counts(session, [film.id])
-    return FilmSummary.from_film(film, offer_count=counts.get(film.id, 0))
-
-
-def set_watched(
-    session: Session, title: str, year: Optional[int] = None, watched: bool = True
-) -> Optional[FilmSummary]:
-    """
-    Mark a film watched or unwatched by title.
-
-    Returns None when no film matches. The web layer should prefer
-    set_watched_by_id - a title is not a stable identifier.
-    """
-    film = get_film_by_title_year(session, title, year)
-    if not film:
-        return None
-
-    return _summarise_one(session, mark_film_watched(session, film.id, watched=watched))
+    return FilmDetail.from_film(film, offers=query.all(), offer_count=total_offers)
 
 
 def set_watched_by_id(
     session: Session, film_id: int, watched: bool = True
 ) -> Optional[FilmSummary]:
     """Mark a film watched or unwatched by primary key."""
-    return _summarise_one(session, mark_film_watched(session, film_id, watched=watched))
+    film = session.query(Film).filter(Film.id == film_id).first()
+    if not film:
+        return None
+
+    film.watched = watched
+    film.watched_at = datetime.now(UTC) if watched else None
+    session.flush()
+
+    logger.info(f"Marked '{film.full_title}' as {'watched' if watched else 'unwatched'}")
+
+    counts = offer_counts(session, [film.id])
+    return FilmSummary.from_film(film, offer_count=counts.get(film.id, 0))
 
 
 def stats(session: Session) -> dict:
     """Aggregate counts for the stats view."""
-    return get_database_stats(session)
+    total_films = session.query(func.count(Film.id)).scalar() or 0
+    watched_films = session.query(func.count(Film.id)).filter(Film.watched.is_(True)).scalar() or 0
+    films_with_tmdb = (
+        session.query(func.count(Film.id)).filter(Film.tmdb_id.isnot(None)).scalar() or 0
+    )
+
+    return {
+        "total_films": total_films,
+        "watched_films": watched_films,
+        "unwatched_films": total_films - watched_films,
+        "films_with_tmdb": films_with_tmdb,
+        "match_rate": round(films_with_tmdb / total_films * 100, 1) if total_films else 0,
+        "total_offers": session.query(func.count(StreamingOffer.id)).scalar() or 0,
+        "unique_providers": session.query(
+            func.count(distinct(StreamingOffer.provider_name))
+        ).scalar()
+        or 0,
+        "unique_countries": session.query(
+            func.count(distinct(StreamingOffer.country_code))
+        ).scalar()
+        or 0,
+    }

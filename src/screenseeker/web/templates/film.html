@@ -91,6 +91,18 @@
         </ul>
       </details>
     {% endif %}
+
+    {#
+      TMDB reports availability for 139 countries. Only the ones this profile
+      can reach are loaded, so say what is being left out rather than let the
+      page imply the film is unavailable everywhere else.
+    #}
+    {% if film.is_scoped %}
+      <p class="strategy__scope">
+        Showing {{ film.offers|length }} of {{ film.offer_count }} offers — the rest are in
+        countries outside your base country and VPN list.
+      </p>
+    {% endif %}
   </section>
 
 </article>

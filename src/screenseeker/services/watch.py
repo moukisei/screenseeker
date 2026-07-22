@@ -18,6 +18,28 @@ from .models import FilmDetail, OfferOut
 logger = get_logger(__name__)
 
 
+def reachable_countries(profile: dict) -> list[str]:
+    """
+    Every country this user could plausibly watch from.
+
+    Their base country, the countries their VPN offers, and any country a
+    subscription is explicitly limited to. TMDB reports availability for 139
+    countries; the rest are unreachable and only make the page heavier.
+
+    A subscription marked available in "all" countries still only reaches the
+    VPN's country list, so it adds nothing here.
+    """
+    countries = {profile["base_country"].upper()}
+    countries.update(c.upper() for c in profile.get("vpn_country_priority", []))
+
+    for sub in profile.get("subscriptions", []):
+        available = sub.get("available_countries", [])
+        if available != "all":
+            countries.update(c.upper() for c in available)
+
+    return sorted(countries)
+
+
 def watch_strategy_for(offers: list[OfferOut], profile: dict) -> WatchStrategy:
     """Rank cached offers against the user's subscriptions."""
     return WatchStrategyAnalyzer(profile).analyze_offers(offers)
@@ -29,9 +51,13 @@ def find_watch_options(
     """
     The detail page: a film and how to watch it.
 
+    Only offers in reachable countries are loaded. FilmDetail still reports
+    the unscoped total, so the page can say it is showing a subset rather than
+    imply the film is unavailable everywhere else.
+
     Returns None when the film is not in the library.
     """
-    detail = get_detail(session, film_id)
+    detail = get_detail(session, film_id, countries=reachable_countries(profile))
     if detail is None:
         return None
 

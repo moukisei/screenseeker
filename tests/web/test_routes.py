@@ -201,3 +201,101 @@ class TestAppConfiguration:
                 unguarded.append(f"{sorted(methods)} {route.path}")
 
         assert not unguarded, f"mutating routes without require_user: {unguarded}"
+
+
+class TestFilters:
+    """
+    The filters are the URL. A view you cannot link to is not bookmarkable,
+    which is the whole point of putting them in query parameters.
+    """
+
+    def stock(self, db):
+        make_film(db, title="Wanted", tmdb_id=1, offers=[("FR", "Netflix", "flatrate")])
+        make_film(db, title="Seen", tmdb_id=2, watched=True, offers=[("FR", "Netflix", "flatrate")])
+        make_film(db, title="American", tmdb_id=3, offers=[("US", "Netflix", "flatrate")])
+        make_film(db, title="Mouse", tmdb_id=4, offers=[("FR", "Disney Plus", "flatrate")])
+
+    def test_the_worked_example_is_one_url(self, client, db):
+        self.stock(db)
+
+        body = client.get("/?watched=false&provider=Netflix&country=FR&offer_type=flatrate").text
+
+        assert "Wanted" in body
+        assert "Seen" not in body
+        assert "American" not in body
+        assert "Mouse" not in body
+        assert "1 film" in body
+
+    def test_the_form_reflects_the_url_it_was_loaded_from(self, client, db):
+        self.stock(db)
+
+        body = client.get("/?provider=Netflix&country=FR&watched=false").text
+
+        assert 'value="Netflix"' in body
+        assert '<option value="FR" selected>' in body
+        assert 'value="false" selected' in body
+        assert "Clear" in body
+
+    def test_no_filters_means_no_clear_link(self, client, db):
+        self.stock(db)
+
+        assert ">Clear<" not in client.get("/").text
+
+    def test_pagination_links_keep_the_filters(self, client, db):
+        for i in range(6):
+            make_film(db, title=f"Film {i}", tmdb_id=10 + i, offers=[("FR", "Netflix", "flatrate")])
+
+        body = client.get("/?provider=Netflix&country=FR&per_page=2").text
+
+        # Losing a filter on page two would silently widen the result set.
+        assert "provider=Netflix" in body
+        assert "country=FR" in body
+        assert "page=2" in body
+
+    def test_a_filter_that_matches_nothing_says_so(self, client, db):
+        self.stock(db)
+
+        body = client.get("/?provider=Mubi").text
+
+        assert "Nothing matches" in body
+        assert "0 films" in body
+
+    def test_an_invalid_offer_type_is_rejected(self, client):
+        assert client.get("/?offer_type=free_beer").status_code == 422
+
+    def test_an_invalid_country_code_is_rejected(self, client):
+        assert client.get("/?country=FRANCE").status_code == 422
+
+    def test_confidence_is_a_sort_the_ui_offers(self, client, db):
+        self.stock(db)
+
+        assert client.get("/?sort=confidence").status_code == 200
+
+
+class TestDetailScoping:
+    def test_only_reachable_countries_are_loaded(self, client, db):
+        """
+        TMDB reports 139 countries. The profile reaches FR, US and GB, so the
+        other offers are weight on every render for no information.
+        """
+        film = make_film(
+            db,
+            offers=[
+                ("FR", "Netflix", "flatrate"),
+                ("US", "Netflix", "flatrate"),
+                ("JP", "Netflix", "flatrate"),
+                ("BR", "Netflix", "flatrate"),
+            ],
+        )
+
+        body = client.get(f"/film/{film.id}").text
+
+        assert "Best option" in body
+        assert "Japan" not in body and ">JP<" not in body
+        # And the page admits it is showing a subset.
+        assert "Showing 2 of 4 offers" in body
+
+    def test_a_film_within_reach_says_nothing_about_scoping(self, client, db):
+        film = make_film(db, offers=[("FR", "Netflix", "flatrate")])
+
+        assert "Showing" not in client.get(f"/film/{film.id}").text

@@ -11,6 +11,7 @@ from sqlalchemy import event
 
 from screenseeker.database.models import Film, StreamingOffer
 from screenseeker.services import library
+from screenseeker.services.library import LibraryFilter
 from screenseeker.services.models import FilmDetail, FilmSummary, OfferOut
 
 
@@ -133,7 +134,7 @@ class TestDetachedInstanceSafety:
         make_film(test_session)
         test_session.commit()
 
-        summaries = library.list_unwatched(test_session)
+        summaries = library.list_films(test_session, filters=LibraryFilter(watched=False))[0]
         test_session.close()
 
         for s in summaries:
@@ -195,7 +196,8 @@ class TestQueryCounts:
         test_session.commit()
 
         summaries, statements = self.count_queries(
-            test_session, lambda: library.list_unwatched(test_session)
+            test_session,
+            lambda: library.list_films(test_session, filters=LibraryFilter(watched=False))[0],
         )
 
         assert len(summaries) == 12
@@ -203,10 +205,13 @@ class TestQueryCounts:
         # One SELECT for the films, one grouped count for the offers.
         assert len(statements) <= 3, f"expected a constant number of queries, got {len(statements)}"
 
-    def test_empty_listing_skips_the_count_query(self, test_session):
+    def test_empty_listing_skips_the_offer_count_query(self, test_session):
         summaries, statements = self.count_queries(
-            test_session, lambda: library.list_unwatched(test_session)
+            test_session,
+            lambda: library.list_films(test_session, filters=LibraryFilter(watched=False))[0],
         )
 
         assert summaries == []
-        assert len(statements) == 1
+        # The total and the page. No grouped offer count, because there are no
+        # film ids to count offers for.
+        assert len(statements) == 2

@@ -32,7 +32,10 @@ MAX_PER_PAGE = 96
 
 # FastAPI rejects anything outside this set with a 422 before it reaches the
 # query builder, so no user input ever selects an ORDER BY.
-SortKey = Literal["added", "title", "year", "rating"]
+SortKey = Literal["added", "title", "year", "rating", "confidence"]
+
+# The five monetization types TMDB uses. Anything else is a typo, not a filter.
+OfferType = Literal["flatrate", "rent", "buy", "free", "ads"]
 
 # Same idea for job kinds: /jobs/sync and /jobs/refresh exist, nothing else.
 JobKind = Literal["sync", "refresh"]
@@ -45,6 +48,7 @@ SORT_LABELS: dict[str, str] = {
     "title": "Title",
     "year": "Year",
     "rating": "Rating",
+    "confidence": "Match confidence",
 }
 
 # Fails at import if the two drift apart, rather than silently sorting by date
@@ -116,16 +120,32 @@ def index(
     page: int = Query(1, ge=1),
     per_page: int = Query(DEFAULT_PER_PAGE, ge=1, le=MAX_PER_PAGE),
     sort: SortKey = "added",
+    provider: Optional[str] = Query(None, max_length=100),
+    country: Optional[str] = Query(None, min_length=2, max_length=2),
+    offer_type: Optional[OfferType] = None,
+    watched: Optional[bool] = None,
 ) -> HTMLResponse:
     """
-    The grid.
+    The grid: filtered, sorted, paginated, all in one query.
 
-    Paginated and sorted in SQL, so the response cost does not grow with the
-    library. HTMX asks for the grid alone; a plain request gets the page, which
-    is why every control also carries a real href.
+    Every filter is a query parameter, so "unwatched, on Netflix, available in
+    FR" is a URL you can bookmark and share. HTMX asks for the library block
+    alone; a plain request gets the page, which is why every control also
+    carries a real href.
     """
-    films, total = library.list_page(db, sort=sort, page=page, per_page=per_page)
+    filters = library.LibraryFilter(
+        # Blank form fields arrive as "" and must not narrow anything.
+        provider=provider or None,
+        country=country.upper() if country else None,
+        offer_type=offer_type,
+        watched=watched,
+    )
+
+    films, total = library.list_films(db, filters=filters, sort=sort, page=page, per_page=per_page)
     pages = max(1, ceil(total / per_page))
+
+    # Everything that identifies this view, for building links that keep it.
+    params = {**filters.as_params(), "sort": sort, "per_page": str(per_page)}
 
     context = {
         "films": films,
@@ -135,11 +155,14 @@ def index(
         "per_page": per_page,
         "sort": sort,
         "sort_labels": SORT_LABELS,
+        "filters": filters,
+        "params": params,
+        "facets": library.facets(db),
     }
 
     if is_htmx(request):
-        # Sorting and paging swap the library alone; the jobs bar sits outside
-        # it precisely so a running job's panel survives.
+        # Filtering, sorting and paging swap the library alone; the jobs bar
+        # sits outside it precisely so a running job's panel survives.
         return render(request, "partials/library.html", context)
 
     context["latest_job"] = jobs.latest(db)

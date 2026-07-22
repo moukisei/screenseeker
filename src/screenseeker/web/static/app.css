@@ -38,18 +38,31 @@ code { background: var(--panel); padding: 0 .3em; border-radius: 4px; font-size:
 
 main { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
 
-.toolbar {
+.filters {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 1rem;
+  align-items: flex-end;
+  gap: .75rem;
   flex-wrap: wrap;
-  margin-bottom: 1.25rem;
+  padding: .85rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
 }
-.count { margin: 0; color: var(--muted); }
-.sort { display: flex; align-items: center; gap: .5rem; }
-.sort label { color: var(--muted); font-size: .875rem; }
-select, button {
+.filters label {
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+  color: var(--muted);
+  font-size: .75rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.filters input, .filters select { min-width: 8rem; }
+.filters__apply { align-self: flex-end; }
+.filters__clear { align-self: flex-end; padding: .45rem .2rem; color: var(--muted); font-size: .85rem; }
+
+.count { margin: 1rem 0 1.25rem; color: var(--muted); }
+input[type="text"], select, button {
   background: var(--panel);
   color: var(--text);
   border: 1px solid var(--line);
@@ -175,6 +188,7 @@ button:hover { border-color: var(--muted); }
 .strategy__block h3 { font-size: .95rem; color: var(--muted); margin: 0 0 .5rem; font-weight: 600; }
 .strategy__block--best h3 { color: var(--accent); }
 .strategy__block summary { color: var(--muted); cursor: pointer; }
+.strategy__scope { color: var(--muted); font-size: .8rem; margin-top: 1rem; }
 
 .options { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
 .option {

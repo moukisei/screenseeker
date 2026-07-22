@@ -11,13 +11,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from .. import settings
-from ..database.queries import get_or_create_film
 from ..exceptions import ConfigurationError
 from ..logger import get_logger
 from ..models import ScrapingResult
 from ..scrapers.base import BaseScraper
 from ..scrapers.html_scraper import HTMLScraper
 from ..user_config import get_letterboxd_username
+from .library import get_or_create_film
 
 logger = get_logger(__name__)
 
