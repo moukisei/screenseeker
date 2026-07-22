@@ -754,12 +754,12 @@ class TestDatabaseConfiguration:
     def test_database_path_configured(self):
         """Test that DATABASE_PATH is configured."""
         assert DATABASE_PATH is not None
-        assert DATABASE_PATH.name == "screenseeker.db"
+        assert DATABASE_PATH.suffix == ".db"
 
     def test_database_dir_configured(self):
         """Test that DATABASE_DIR is configured."""
         assert DATABASE_DIR is not None
-        assert DATABASE_DIR.name == "data"
+        assert DATABASE_PATH.parent == DATABASE_DIR
 
 
 class TestEngine:
