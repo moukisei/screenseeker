@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(ruff format:*)",
-      "Bash(git -C /Users/mouktarabdillahi/projects/screenseeker rm:*)"
+      "Bash(git -C /Users/mouktarabdillahi/projects/screenseeker rm:*)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
     ]
   }
 }

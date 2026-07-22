@@ -41,10 +41,11 @@ from .database.queries import (
 )
 from .database.service import enrich_and_save_film
 from .database.session import get_database_info, reset_database
-from .enrichers import TMDBEnricher, WatchStrategyAnalyzer
+from .enrichers import TMDBEnricher
 from .exporters import JSONExporter
 from .logger import get_logger, setup_logger
 from .scrapers import CSVScraper, HTMLScraper
+from .services import find_watch_options, parse_query
 
 # Set up logging
 setup_logger(level=config.LOG_LEVEL, log_to_file=config.LOG_TO_FILE, use_colors=True)
@@ -112,16 +113,10 @@ def watch(title, year, force):
             click.echo("\nCancelled")
             return
 
-    # Parse title/year if in format "Title (Year)"
-    if not year and "(" in title and title.endswith(")"):
-        import re
-
-        match = re.match(r"^(.+?)\s*\((\d{4})\)$", title.strip())
-        if match:
-            title = match.group(1).strip()
-            year = int(match.group(2))
-
-    click.echo(f"🔍 Searching for: '{title}' ({year or 'no year specified'})")
+    # Parse here as well as in the service so the echo shows the year the
+    # lookup will actually use.
+    display_title, display_year = parse_query(title, year)
+    click.echo(f"🔍 Searching for: '{display_title}' ({display_year or 'no year specified'})")
 
     # Load user config
     try:
@@ -143,38 +138,27 @@ def watch(title, year, force):
             language=cfg.get("tmdb", {}).get("language", "en-US"),
         ) as enricher:
             with get_session() as session:
-                # Enrich and save to database
-                film, result = enrich_and_save_film(
-                    session, enricher, title, year, force_refresh=force
+                result = find_watch_options(
+                    session,
+                    title,
+                    year,
+                    profile=user_config.get_subscription_profile(cfg),
+                    enricher=enricher,
+                    force_refresh=force,
                 )
 
-                # Log cache info
-                if film.last_checked:
-                    # Ensure last_checked is timezone-aware for comparison
-                    last_checked = film.last_checked
-                    if last_checked.tzinfo is None:
-                        last_checked = last_checked.replace(tzinfo=UTC)
-                    age = datetime.now(UTC) - last_checked
-                    if age.total_seconds() < 60:
-                        click.secho("📊 Data freshly fetched from TMDB", fg="green")
-                    else:
-                        days = age.days
-                        click.echo(
-                            f"📊 Using cached data ({days} day{'s' if days != 1 else ''} old)"
-                        )
+                if result.cache_age_seconds is None or not result.from_cache:
+                    click.secho("📊 Data freshly fetched from TMDB", fg="green")
+                else:
+                    days = int(result.cache_age_seconds // 86400)
+                    click.echo(f"📊 Using cached data ({days} day{'s' if days != 1 else ''} old)")
 
-                # Analyze with watch strategy
-                analyzer = WatchStrategyAnalyzer(user_config.get_subscription_profile(cfg))
-                strategy = analyzer.analyze(result)
+                _display_watch_strategy(result.enrichment, result.strategy)
 
-                # Display results
-                _display_watch_strategy(result, strategy)
-
-                # Show year mismatch note
-                if film.year_mismatch:
+                if result.year_mismatch:
                     click.secho(
                         f"\n📅 Note: Year mismatch - "
-                        f"Letterboxd: {film.letterboxd_year}, TMDB: {film.tmdb_year}",
+                        f"Letterboxd: {result.letterboxd_year}, TMDB: {result.tmdb_year}",
                         fg="yellow",
                     )
 

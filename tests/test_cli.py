@@ -2,13 +2,15 @@
 Tests for CLI commands and functionality.
 """
 
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from click.testing import CliRunner
 
 from screenseeker.cli import cli
 from screenseeker.database.models import Film
 from screenseeker.enrichers.enrichment_models import EnrichmentResult, TMDBMovieInfo
+from screenseeker.enrichers.watch_strategy import WatchStrategy
+from screenseeker.services import WatchResult
 
 # Minimal valid config returned by user_config.load_config() in tests
 MOCK_CFG = {
@@ -112,19 +114,13 @@ class TestWatchCommand:
     @patch("screenseeker.cli.user_config.load_config", return_value=MOCK_CFG)
     @patch("screenseeker.cli.TMDBEnricher")
     @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.enrich_and_save_film")
-    @patch("screenseeker.cli.WatchStrategyAnalyzer")
+    @patch("screenseeker.cli.find_watch_options")
     @patch("screenseeker.cli._display_watch_strategy")
     def test_watch_with_title_and_year(
-        self, mock_display, mock_analyzer, mock_enrich, mock_session, mock_enricher, mock_cfg
+        self, mock_display, mock_find, mock_session, mock_enricher, mock_cfg
     ):
         """Test watch command with title and year."""
-        # Setup mocks
-        mock_film = Mock()
-        mock_film.last_checked = None
-        mock_film.year_mismatch = False
-
-        mock_result = EnrichmentResult(
+        mock_enrichment = EnrichmentResult(
             query_title="Test Movie",
             success=True,
             tmdb_movie=TMDBMovieInfo(
@@ -139,21 +135,29 @@ class TestWatchCommand:
                 backdrop_path=None,
                 vote_average=8.0,
                 popularity=100.0,
-                query_title="Test Movie",
             ),
             streaming_offers=[],
             match_confidence="exact",
             error_message=None,
         )
 
-        mock_enrich.return_value = (mock_film, mock_result)
-        mock_analyzer.return_value.analyze.return_value = Mock()
+        mock_find.return_value = WatchResult(
+            film_id=1,
+            query_title="Test Movie",
+            query_year=2020,
+            enrichment=mock_enrichment,
+            strategy=WatchStrategy(),
+            from_cache=False,
+            cache_age_seconds=None,
+        )
 
         runner = CliRunner()
         result = runner.invoke(cli, ["watch", "Test Movie", "--year", "2020"])
 
         assert result.exit_code == 0
         assert "Searching for" in result.output
+        assert mock_find.call_args.args[1] == "Test Movie"
+        assert mock_find.call_args.args[2] == 2020
 
     @patch(
         "screenseeker.cli.user_config.load_config",
