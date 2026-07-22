@@ -1,5 +1,8 @@
 """
-Tests for CLI commands and functionality.
+Tests for the CLI.
+
+The CLI is plumbing: set up, keep the mirror fresh, start the server. Browsing
+and filtering live in the web UI and are tested there.
 """
 
 from unittest.mock import patch
@@ -7,11 +10,10 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from screenseeker.cli import cli
-from screenseeker.enrichers.enrichment_models import EnrichmentResult, TMDBMovieInfo
-from screenseeker.enrichers.watch_strategy import WatchStrategy
-from screenseeker.services import FilmSummary, WatchResult
+from screenseeker.services import FilmSummary
+from screenseeker.services.enrichment import EnrichmentReport, FilmError
+from screenseeker.services.sync import SyncReport
 
-# Minimal valid config returned by user_config.load_config() in tests
 MOCK_CFG = {
     "letterboxd": {"username": "testuser"},
     "tmdb": {"api_key": "test_key", "rate_limit": 5.0, "language": "en-US"},
@@ -24,470 +26,197 @@ MOCK_CFG = {
 }
 
 
-class TestCLIBasics:
-    """Test basic CLI functionality."""
-
-    def test_cli_help(self):
-        """Test main CLI help."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["--help"])
-        assert result.exit_code == 0
-        assert "ScreenSeeker" in result.output
-
-    def test_cli_version(self):
-        """Test version command."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["--version"])
-        assert result.exit_code == 0
-
-    def test_db_help(self):
-        """Test db command help."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["db", "--help"])
-        assert result.exit_code == 0
-
-    def test_search_help(self):
-        """Test search command help."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["search", "--help"])
-        assert result.exit_code == 0
-
-    def test_watch_help(self):
-        """Test watch command help."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["watch", "--help"])
-        assert result.exit_code == 0
-
-    def test_sync_help(self):
-        """Test sync command help."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["sync", "--help"])
-        assert result.exit_code == 0
-
-    def test_enrich_help(self):
-        """Test enrich command help."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["enrich", "--help"])
-        assert result.exit_code == 0
-
-    def test_watchlist_help(self):
-        """Test watchlist command help."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["watchlist", "--help"])
-        assert result.exit_code == 0
-
-    def test_watched_help(self):
-        """Test watched command help."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["watched", "--help"])
-        assert result.exit_code == 0
-
-    def test_providers_help(self):
-        """Test providers command help."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["providers", "--help"])
-        assert result.exit_code == 0
-
-    def test_country_help(self):
-        """Test country command help."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["country", "--help"])
-        assert result.exit_code == 0
-
-    def test_refresh_help(self):
-        """Test refresh command help."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["refresh", "--help"])
-        assert result.exit_code == 0
-
-    def test_report_help(self):
-        """Test report command help."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["report", "--help"])
-        assert result.exit_code == 0
-
-
-class TestWatchCommand:
-    """Test watch command."""
-
-    @patch("screenseeker.cli.user_config.load_config", return_value=MOCK_CFG)
-    @patch("screenseeker.cli.TMDBEnricher")
-    @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.find_watch_options")
-    @patch("screenseeker.cli._display_watch_strategy")
-    def test_watch_with_title_and_year(
-        self, mock_display, mock_find, mock_session, mock_enricher, mock_cfg
-    ):
-        """Test watch command with title and year."""
-        mock_enrichment = EnrichmentResult(
-            query_title="Test Movie",
-            success=True,
-            tmdb_movie=TMDBMovieInfo(
-                tmdb_id=123,
-                title="Test Movie",
-                original_title="Test Movie",
-                year=2020,
-                release_date="2020-01-01",
-                overview="Test",
-                original_language="en",
-                poster_path="/test.jpg",
-                backdrop_path=None,
-                vote_average=8.0,
-                popularity=100.0,
-            ),
-            streaming_offers=[],
-            match_confidence="exact",
-            error_message=None,
-        )
-
-        mock_find.return_value = WatchResult(
-            film_id=1,
-            query_title="Test Movie",
-            query_year=2020,
-            enrichment=mock_enrichment,
-            strategy=WatchStrategy(),
-            from_cache=False,
-            cache_age_seconds=None,
-        )
-
-        runner = CliRunner()
-        result = runner.invoke(cli, ["watch", "Test Movie", "--year", "2020"])
-
-        assert result.exit_code == 0
-        assert "Searching for" in result.output
-        assert mock_find.call_args.args[1] == "Test Movie"
-        assert mock_find.call_args.args[2] == 2020
-
-    @patch(
-        "screenseeker.cli.user_config.load_config",
-        return_value={"tmdb": {"api_key": ""}, "profile": {}},
-    )
-    def test_watch_without_api_key(self, mock_cfg):
-        """Test watch command without TMDB API key."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["watch", "Test Movie"])
-
-        assert result.exit_code == 1
-        assert "TMDB API key not configured" in result.output
-
-    def test_watch_with_title_containing_year(self):
-        """Test watch command with title containing year."""
-        runner = CliRunner()
-        # This will fail without API key, but tests the parsing logic
-        result = runner.invoke(cli, ["watch", "The Matrix (1999)"])
-
-        # Should parse the year from title
-        assert "1999" in result.output or "Matrix" in result.output
-
-
 def make_summary(title="Test Movie", year=2020, **overrides):
-    """A FilmSummary as the service layer would return it."""
     fields = {
         "id": 1,
         "title": title,
         "year": year,
         "full_title": f"{title} ({year})" if year else title,
         "tmdb_id": 123,
-        "watched": False,
     }
     fields.update(overrides)
     return FilmSummary(**fields)
 
 
-class TestSearchCommand:
-    """Test search command."""
+class TestCommandSurface:
+    """The CLI is deliberately small. Commands removed must stay removed."""
 
-    @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.library.search")
-    def test_search_with_query(self, mock_search, mock_session):
-        """Test search command with query."""
-        mock_search.return_value = [make_summary()]
-
-        runner = CliRunner()
-        result = runner.invoke(cli, ["search", "Test"])
-
+    def test_help(self):
+        result = CliRunner().invoke(cli, ["--help"])
         assert result.exit_code == 0
-        mock_search.assert_called_once()
+        assert "ScreenSeeker" in result.output
 
-    @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.library.search")
-    def test_search_no_results(self, mock_search, mock_session):
-        """Test search command with no results."""
-        mock_search.return_value = []
+    def test_version(self):
+        assert CliRunner().invoke(cli, ["--version"]).exit_code == 0
 
-        runner = CliRunner()
-        result = runner.invoke(cli, ["search", "NonexistentMovie"])
+    @classmethod
+    def commands(cls):
+        return {"config", "sync", "refresh", "serve"}
 
-        assert result.exit_code == 0
-        assert "No films found" in result.output
+    def test_exposes_only_the_plumbing_commands(self):
+        result = CliRunner().invoke(cli, ["--help"])
+        for name in self.commands():
+            assert name in result.output
 
+    def test_browsing_commands_are_gone(self):
+        """These moved to the web UI; a stub left behind would be a trap."""
+        for removed in ("search", "providers", "country", "watchlist", "watched", "report"):
+            result = CliRunner().invoke(cli, [removed, "--help"])
+            assert result.exit_code != 0, f"{removed} should no longer exist"
 
-class TestWatchlistCommand:
-    """Test watchlist command."""
+    def test_enrich_is_gone(self):
+        """A never-checked film is stale, so refresh already covers it."""
+        assert CliRunner().invoke(cli, ["enrich", "--help"]).exit_code != 0
 
-    @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.library.list_unwatched")
-    def test_watchlist_default(self, mock_get_films, mock_session):
-        """Test watchlist command."""
-        mock_get_films.return_value = [make_summary()]
-
-        runner = CliRunner()
-        result = runner.invoke(cli, ["watchlist"])
-
-        assert result.exit_code == 0
-
-    @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.library.count_unwatched")
-    def test_watchlist_count(self, mock_count, mock_session):
-        """--count prints just the number and skips the listing query."""
-        mock_count.return_value = 42
-
-        runner = CliRunner()
-        result = runner.invoke(cli, ["watchlist", "--count"])
-
-        assert result.exit_code == 0
-        assert "42" in result.output
+    def test_db_group_is_gone(self):
+        """Schema is Alembic's job, and reset was what destroyed the database."""
+        assert CliRunner().invoke(cli, ["db", "--help"]).exit_code != 0
 
 
-class TestWatchedCommand:
-    """Test watched command."""
+class TestConfigCommands:
+    def test_config_help(self):
+        assert CliRunner().invoke(cli, ["config", "--help"]).exit_code == 0
 
-    @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.library.set_watched")
-    def test_mark_film_watched(self, mock_set, mock_session):
-        """Test marking a film as watched."""
-        mock_set.return_value = make_summary(watched=True)
-
-        runner = CliRunner()
-        result = runner.invoke(cli, ["watched", "Test Movie", "--year", "2020"])
-
-        assert result.exit_code == 0
-        mock_set.assert_called_once()
-        assert mock_set.call_args.kwargs["watched"] is True
-
-    @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.library.set_watched")
-    def test_unwatch_passes_false(self, mock_set, mock_session):
-        """--unwatch flips the flag rather than calling a different path."""
-        mock_set.return_value = make_summary()
-
-        runner = CliRunner()
-        result = runner.invoke(cli, ["watched", "Test Movie", "--unwatch"])
-
-        assert result.exit_code == 0
-        assert mock_set.call_args.kwargs["watched"] is False
-
-    @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.library.set_watched")
-    def test_watched_film_not_found(self, mock_set, mock_session):
-        """Test watched command when film not found."""
-        mock_set.return_value = None
-
-        runner = CliRunner()
-        result = runner.invoke(cli, ["watched", "Nonexistent Movie"])
-
+    @patch("screenseeker.cli.user_config.config_exists", return_value=False)
+    def test_edit_without_config_fails(self, mock_exists):
+        result = CliRunner().invoke(cli, ["config", "edit"])
         assert result.exit_code == 1
-        assert "not found" in result.output.lower()
+        assert "config init" in result.output
+
+    def test_path_reports_locations(self):
+        result = CliRunner().invoke(cli, ["config", "path"])
+        assert result.exit_code == 0
+        assert "config:" in result.output
+        assert "database:" in result.output
 
 
 class TestSyncCommand:
-    """Test sync command - basic help test only due to complexity."""
+    def test_help(self):
+        assert CliRunner().invoke(cli, ["sync", "--help"]).exit_code == 0
 
-    def test_sync_help(self):
-        """Test sync command help works."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["sync", "--help"])
-        assert result.exit_code == 0
-        assert "sync" in result.output.lower() or "scrape" in result.output.lower()
-
-
-class TestDbCommands:
-    """Test database commands."""
-
+    @patch("screenseeker.cli.user_config.load_config", return_value=MOCK_CFG)
     @patch("screenseeker.cli.init_db")
-    @patch("screenseeker.cli.get_database_info")
-    def test_db_init(self, mock_get_info, mock_init_db):
-        """Test db init command."""
-        mock_get_info.return_value = {"path": "/test/path", "exists": True}
-
-        runner = CliRunner()
-        result = runner.invoke(cli, ["db", "init"])
-
-        assert result.exit_code == 0
-        mock_init_db.assert_called_once()
-
-    @patch("screenseeker.cli.reset_database")
-    @patch("screenseeker.cli.get_database_info")
-    def test_db_init_with_reset(self, mock_get_info, mock_reset):
-        """Test db init command with reset flag."""
-        mock_get_info.return_value = {"path": "/test/path", "exists": True}
-
-        runner = CliRunner()
-        result = runner.invoke(cli, ["db", "init", "--reset"], input="y\n")
-
-        assert result.exit_code == 0
-        mock_reset.assert_called_once()
-
+    @patch("screenseeker.cli.HTMLScraper")
     @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.library.stats")
+    @patch("screenseeker.cli.ingest_watchlist")
+    def test_reports_counts(self, mock_ingest, mock_session, mock_scraper, mock_init, mock_cfg):
+        mock_ingest.return_value = SyncReport(
+            scraped=10, added=3, existing=7, pages_scraped=2, source="html"
+        )
+
+        result = CliRunner().invoke(cli, ["sync"])
+
+        assert result.exit_code == 0
+        assert "Added: 3" in result.output
+        assert "Already known: 7" in result.output
+
+    @patch(
+        "screenseeker.cli.user_config.load_config",
+        return_value={"letterboxd": {"username": ""}, "tmdb": {}},
+    )
+    def test_requires_username(self, mock_cfg):
+        result = CliRunner().invoke(cli, ["sync"])
+        assert result.exit_code == 1
+        assert "username not configured" in result.output
+
+    @patch("screenseeker.cli.user_config.load_config", return_value=MOCK_CFG)
     @patch("screenseeker.cli.init_db")
-    def test_db_stats(self, mock_init, mock_stats, mock_session):
-        """Test db stats command."""
-        mock_stats.return_value = {
-            "total_films": 10,
-            "watched_films": 3,
-            "unwatched_films": 7,
-            "films_with_tmdb": 8,
-            "match_rate": 80.0,
-            "total_offers": 50,
-            "unique_providers": 5,
-            "unique_countries": 10,
-            "stale_films": 2,
-        }
-
-        runner = CliRunner()
-        result = runner.invoke(cli, ["db", "stats"])
-
-        assert result.exit_code == 0
-        mock_stats.assert_called_once()
-
-
-class TestProvidersCommand:
-    """Test providers command."""
-
+    @patch("screenseeker.cli.HTMLScraper")
     @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.library.list_by_provider")
-    def test_providers_with_provider_filter(self, mock_list, mock_session):
-        """Test providers command with provider filter."""
-        mock_list.return_value = ([make_summary()], 1)
+    @patch("screenseeker.cli.ingest_watchlist")
+    def test_scrape_failure_exits_nonzero(
+        self, mock_ingest, mock_session, mock_scraper, mock_init, mock_cfg
+    ):
+        mock_ingest.return_value = SyncReport(
+            scraped=0, success=False, error_message="Letterboxd returned 503"
+        )
 
-        runner = CliRunner()
-        result = runner.invoke(cli, ["providers", "--provider", "Netflix"])
+        result = CliRunner().invoke(cli, ["sync"])
 
-        assert result.exit_code == 0
-        mock_list.assert_called_once()
-
-    @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.library.list_by_provider")
-    def test_providers_no_results(self, mock_list, mock_session):
-        """Test providers command with no results."""
-        mock_list.return_value = ([], 0)
-
-        runner = CliRunner()
-        result = runner.invoke(cli, ["providers", "--provider", "Netflix"])
-
-        assert result.exit_code == 0
-        assert "No films found" in result.output
-
-    @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.library.list_by_provider")
-    def test_providers_reports_total_beyond_limit(self, mock_list, mock_session):
-        """The pre-limit total drives the "and N more" line."""
-        mock_list.return_value = ([make_summary()], 10)
-
-        runner = CliRunner()
-        result = runner.invoke(cli, ["providers", "--provider", "Netflix", "--limit", "1"])
-
-        assert result.exit_code == 0
-        assert "Found 10 film(s)" in result.output
-        assert "and 9 more" in result.output
-
-
-class TestCountryCommand:
-    """Test country command."""
-
-    @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.library.list_by_country")
-    @patch("screenseeker.cli.init_db")
-    def test_country_with_code(self, mock_init, mock_list, mock_session):
-        """Test country command with country code."""
-        mock_list.return_value = ([make_summary()], 1)
-
-        runner = CliRunner()
-        result = runner.invoke(cli, ["country", "--country", "US"])
-
-        assert result.exit_code == 0
-        mock_list.assert_called_once()
-
-    @patch("screenseeker.cli.get_session")
-    @patch("screenseeker.cli.library.list_by_country")
-    @patch("screenseeker.cli.init_db")
-    def test_country_no_results(self, mock_init, mock_list, mock_session):
-        """Test country command with no results."""
-        mock_list.return_value = ([], 0)
-
-        runner = CliRunner()
-        result = runner.invoke(cli, ["country", "--country", "US"])
-
-        assert result.exit_code == 0
-        assert "No films found" in result.output
+        assert result.exit_code == 1
+        assert "503" in result.output
 
 
 class TestRefreshCommand:
-    """Test refresh command."""
+    def test_help(self):
+        assert CliRunner().invoke(cli, ["refresh", "--help"]).exit_code == 0
 
     @patch("screenseeker.cli.user_config.load_config", return_value=MOCK_CFG)
+    @patch("screenseeker.cli.init_db")
     @patch("screenseeker.cli.get_session")
     @patch("screenseeker.cli.enrichment.select_stale")
-    @patch("screenseeker.cli.init_db")
-    def test_refresh_no_stale_films(self, mock_init, mock_select, mock_session, mock_cfg):
-        """Test refresh command with no stale films."""
+    def test_nothing_stale(self, mock_select, mock_session, mock_init, mock_cfg):
         mock_select.return_value = ([], 0)
 
-        runner = CliRunner()
-        result = runner.invoke(cli, ["refresh"])
+        result = CliRunner().invoke(cli, ["refresh"])
 
         assert result.exit_code == 0
         assert "fresh" in result.output.lower()
 
     @patch("screenseeker.cli.user_config.load_config", return_value=MOCK_CFG)
+    @patch("screenseeker.cli.init_db")
     @patch("screenseeker.cli.get_session")
     @patch("screenseeker.cli.enrichment.select_stale")
-    @patch("screenseeker.cli.init_db")
-    def test_refresh_dry_run(self, mock_init, mock_select, mock_session, mock_cfg):
-        """Test refresh command in dry-run mode."""
+    def test_dry_run_makes_no_changes(self, mock_select, mock_session, mock_init, mock_cfg):
         mock_select.return_value = ([make_summary(cache_age_days=30)], 1)
 
-        runner = CliRunner()
-        result = runner.invoke(cli, ["refresh", "--dry-run"])
+        result = CliRunner().invoke(cli, ["refresh", "--dry-run"])
 
         assert result.exit_code == 0
-        assert "dry run" in result.output.lower() or "would" in result.output.lower()
+        assert "Dry run" in result.output
 
     @patch("screenseeker.cli.user_config.load_config", return_value=MOCK_CFG)
+    @patch("screenseeker.cli.init_db")
     @patch("screenseeker.cli.get_session")
     @patch("screenseeker.cli.enrichment.select_stale")
-    @patch("screenseeker.cli.init_db")
-    def test_refresh_dry_run_shows_never_checked(
-        self, mock_init, mock_select, mock_session, mock_cfg
-    ):
-        """A film with no last_checked reads as never checked, not '0 days old'."""
+    def test_never_checked_is_labelled(self, mock_select, mock_session, mock_init, mock_cfg):
         mock_select.return_value = ([make_summary(cache_age_days=None)], 1)
 
-        runner = CliRunner()
-        result = runner.invoke(cli, ["refresh", "--dry-run"])
+        result = CliRunner().invoke(cli, ["refresh", "--dry-run"])
 
-        assert result.exit_code == 0
         assert "never checked" in result.output
 
+    @patch("screenseeker.cli.user_config.load_config", return_value=MOCK_CFG)
+    @patch("screenseeker.cli.init_db")
+    @patch("screenseeker.cli.get_session")
+    @patch("screenseeker.cli.enrichment.select_stale")
+    @patch("screenseeker.cli._build_enricher")
+    @patch("screenseeker.cli.enrich_films")
+    def test_reports_failures(
+        self, mock_enrich, mock_build, mock_select, mock_session, mock_init, mock_cfg
+    ):
+        mock_select.return_value = ([make_summary()], 1)
+        mock_enrich.return_value = EnrichmentReport(
+            total=2,
+            succeeded=1,
+            failed=1,
+            errors=[FilmError(film_id=2, title="Broken (2020)", error="404 from TMDB")],
+        )
 
-class TestEnrichCommand:
-    """Test enrich command - basic tests only."""
+        result = CliRunner().invoke(cli, ["refresh", "--yes"])
 
-    def test_enrich_help(self):
-        """Test enrich command help works."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["enrich", "--help"])
         assert result.exit_code == 0
-        assert "enrich" in result.output.lower()
+        assert "Refreshed 1" in result.output
+        assert "Broken (2020)" in result.output
+        assert "404 from TMDB" in result.output
 
+    @patch("screenseeker.cli.user_config.load_config", return_value=MOCK_CFG)
+    @patch("screenseeker.cli.init_db")
+    @patch("screenseeker.cli.get_session")
+    @patch("screenseeker.cli.enrichment.select_stale")
+    def test_declining_the_prompt_does_nothing(
+        self, mock_select, mock_session, mock_init, mock_cfg
+    ):
+        mock_select.return_value = ([make_summary()], 1)
 
-class TestReportCommand:
-    """Test report command - basic tests only."""
+        result = CliRunner().invoke(cli, ["refresh"], input="n\n")
 
-    def test_report_help(self):
-        """Test report command help works."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["report", "--help"])
         assert result.exit_code == 0
-        assert "report" in result.output.lower()
+        assert "Cancelled" in result.output
+
+
+class TestServeCommand:
+    def test_help(self):
+        result = CliRunner().invoke(cli, ["serve", "--help"])
+        assert result.exit_code == 0
+        assert "web" in result.output.lower()

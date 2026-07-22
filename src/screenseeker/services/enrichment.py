@@ -11,7 +11,6 @@ from typing import Callable, Optional
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from ..database.models import Film
 from ..database.queries import get_stale_films
 from ..database.service import enrich_and_save_film
 from ..enrichers.tmdb_enricher import TMDBEnricher
@@ -50,35 +49,18 @@ class EnrichmentReport(BaseModel):
         return self.failed == 0
 
 
-def select_unenriched(
-    session: Session, limit: Optional[int] = None
-) -> tuple[list[FilmSummary], int]:
-    """
-    Films with no TMDB match yet.
-
-    Returns (selection, total_found) so callers can say "limiting to N of M".
-    """
-    films = session.query(Film).filter(Film.tmdb_id.is_(None)).all()
-    total = len(films)
-    if limit:
-        films = films[:limit]
-    return [FilmSummary.from_film(f, offer_count=0) for f in films], total
-
-
-def select_all(session: Session, limit: Optional[int] = None) -> tuple[list[FilmSummary], int]:
-    """Every film, for a forced re-enrichment."""
-    films = session.query(Film).all()
-    total = len(films)
-    if limit:
-        films = films[:limit]
-    counts = offer_counts(session, [f.id for f in films])
-    return [FilmSummary.from_film(f, offer_count=counts.get(f.id, 0)) for f in films], total
-
-
 def select_stale(
     session: Session, days: int = 7, limit: Optional[int] = None
 ) -> tuple[list[FilmSummary], int]:
-    """Films whose streaming data has aged past `days`."""
+    """
+    Films that need a TMDB fetch.
+
+    This covers both films never checked and films whose data has aged past
+    `days` - a never-checked film is stale, which is why there is no separate
+    "unenriched" selection.
+
+    Returns (selection, total_found) so callers can say "doing N of M".
+    """
     films = get_stale_films(session, days=days)
     total = len(films)
     if limit:

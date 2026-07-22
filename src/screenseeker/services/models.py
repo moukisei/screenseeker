@@ -14,8 +14,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from .. import settings
 from ..database.models import Film
 from ..database.models import StreamingOffer as OfferRow
-from ..enrichers.enrichment_models import EnrichmentResult
-from ..enrichers.watch_strategy import WatchStrategy
 
 
 def poster_url(poster_path: Optional[str], size: str = settings.TMDB_POSTER_SIZE) -> Optional[str]:
@@ -188,30 +186,3 @@ class FilmDetail(FilmSummary):
             notes=film.notes,
             offers=offers,
         )
-
-
-class WatchResult(BaseModel):
-    """Everything needed to answer "where can I watch this?"."""
-
-    model_config = ConfigDict(frozen=True)
-
-    film_id: Optional[int] = Field(None, description="Database id, None if nothing was persisted")
-    query_title: str = Field(..., description="Title the caller asked for")
-    query_year: Optional[int] = Field(None, description="Year the caller asked for")
-
-    enrichment: EnrichmentResult = Field(..., description="TMDB data, live or from cache")
-    strategy: WatchStrategy = Field(..., description="Personalised ranking of the offers")
-
-    from_cache: bool = Field(..., description="True when no TMDB request was made")
-    cache_age_seconds: Optional[float] = Field(
-        None, description="Age of the persisted data, None if never checked"
-    )
-
-    year_mismatch: bool = Field(default=False, description="Letterboxd year differs from TMDB")
-    letterboxd_year: Optional[int] = Field(None, description="Year as recorded by Letterboxd")
-    tmdb_year: Optional[int] = Field(None, description="Year according to TMDB")
-
-    @property
-    def found(self) -> bool:
-        """Whether TMDB matched the query to a film at all."""
-        return self.enrichment.success and self.enrichment.tmdb_movie is not None

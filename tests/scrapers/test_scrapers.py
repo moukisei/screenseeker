@@ -8,7 +8,6 @@ import pytest
 import requests
 
 from screenseeker.scrapers.base import BaseScraper
-from screenseeker.scrapers.csv_scraper import CSVScraper
 from screenseeker.scrapers.html_scraper import HTMLScraper
 
 
@@ -37,123 +36,6 @@ class TestBaseScraper:
         """Test that BaseScraper defines context manager methods."""
         assert hasattr(BaseScraper, "__enter__")
         assert hasattr(BaseScraper, "__exit__")
-
-
-class TestCSVScraperIntegration:
-    """Integration tests for CSV scraper."""
-
-    @pytest.fixture
-    def csv_dir(self, tmp_path):
-        """Create temporary directory for CSV files."""
-        return tmp_path
-
-    def test_csv_scraper_basic_success(self, csv_dir):
-        """Test CSV scraper with valid data."""
-        csv_file = csv_dir / "movies.csv"
-        csv_file.write_text(
-            "Name,Year,Date\n"
-            "The Matrix,1999,2024-01-01\n"
-            "Inception,2010,2024-01-02\n"
-            "Interstellar,2014,2024-01-03\n"
-        )
-
-        scraper = CSVScraper(csv_file_path=str(csv_file))
-        result = scraper.scrape()
-
-        assert result.success is True
-        assert result.film_count == 3
-        assert result.source == "csv"
-        assert len(result.films) == 3
-        assert result.films[0].film_title == "The Matrix"
-        assert result.films[0].year == 1999
-        assert result.films[0].date_added == "2024-01-01"
-
-    def test_csv_scraper_without_year(self, csv_dir):
-        """Test CSV scraper with films without year."""
-        csv_file = csv_dir / "no_year.csv"
-        csv_file.write_text("Name\nThe Matrix\nInception\n")
-
-        scraper = CSVScraper(csv_file_path=str(csv_file))
-        result = scraper.scrape()
-
-        assert result.success is True
-        assert len(result.films) == 2
-        assert result.films[0].year is None
-
-    def test_csv_scraper_invalid_year(self, csv_dir):
-        """Test CSV scraper handles invalid years."""
-        csv_file = csv_dir / "invalid.csv"
-        csv_file.write_text("Name,Year\nThe Matrix,invalid\nInception,2010\n")
-
-        scraper = CSVScraper(csv_file_path=str(csv_file))
-        result = scraper.scrape()
-
-        assert result.success is True
-        assert len(result.films) == 2
-        assert result.films[0].year is None  # Invalid year
-        assert result.films[1].year == 2010
-
-    def test_csv_scraper_empty_names(self, csv_dir):
-        """Test CSV scraper skips empty names."""
-        csv_file = csv_dir / "empty.csv"
-        csv_file.write_text("Name,Year\n,1999\nInception,2010\n")
-
-        scraper = CSVScraper(csv_file_path=str(csv_file))
-        result = scraper.scrape()
-
-        assert result.success is True
-        assert len(result.films) == 1
-        assert result.films[0].film_title == "Inception"
-
-    def test_csv_scraper_missing_columns(self, csv_dir):
-        """Test CSV scraper with missing required columns."""
-        csv_file = csv_dir / "missing.csv"
-        csv_file.write_text("Title,Year\nThe Matrix,1999\n")
-
-        scraper = CSVScraper(csv_file_path=str(csv_file))
-        result = scraper.scrape()
-
-        assert result.success is False
-        assert "Missing required columns" in result.error_message
-
-    def test_csv_scraper_file_not_found(self):
-        """Test CSV scraper with non-existent file."""
-        with pytest.raises(FileNotFoundError):
-            CSVScraper(csv_file_path="/non/existent.csv")
-
-    def test_csv_scraper_malformed_csv(self, csv_dir):
-        """Test CSV scraper with malformed CSV."""
-        csv_file = csv_dir / "malformed.csv"
-        csv_file.write_text('Name,Year\n"Unclosed,2010\n')
-
-        scraper = CSVScraper(csv_file_path=str(csv_file))
-        result = scraper.scrape()
-
-        # CSV parser handles malformed data gracefully - logs error and continues
-        assert result.success is True
-        assert len(result.films) == 0  # Row was skipped due to error
-
-    def test_csv_scraper_extra_columns(self, csv_dir):
-        """Test CSV scraper ignores extra columns."""
-        csv_file = csv_dir / "extra.csv"
-        csv_file.write_text("Name,Year,Rating,Notes\nThe Matrix,1999,5,Great\n")
-
-        scraper = CSVScraper(csv_file_path=str(csv_file))
-        result = scraper.scrape()
-
-        assert result.success is True
-        assert len(result.films) == 1
-
-    def test_csv_scraper_unicode(self, csv_dir):
-        """Test CSV scraper with unicode characters."""
-        csv_file = csv_dir / "unicode.csv"
-        csv_file.write_text("Name,Year\nAmélie,2001\n", encoding="utf-8")
-
-        scraper = CSVScraper(csv_file_path=str(csv_file))
-        result = scraper.scrape()
-
-        assert result.success is True
-        assert result.films[0].film_title == "Amélie"
 
 
 class TestHTMLScraperIntegration:

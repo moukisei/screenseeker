@@ -43,8 +43,8 @@ class WatchStrategy(BaseModel):
         default_factory=list, description="All options on owned subscriptions"
     )
 
-    # Not available on subscriptions
-    not_owned_options: list[StreamingOffer] = Field(
+    # Streaming, but not on anything the user pays for.
+    not_owned_options: list[WatchOption] = Field(
         default_factory=list, description="Available but not owned"
     )
 
@@ -179,29 +179,48 @@ class WatchStrategyAnalyzer:
             via_bundle=via_bundle,
         )
 
+    # Sorts below every option the user can actually use.
+    UNOWNED_PRIORITY = 9999
+
+    def _as_unowned_option(self, offer) -> WatchOption:
+        """Wrap an offer the user cannot use, so every list holds WatchOption."""
+        return WatchOption(
+            provider=offer.provider_name,
+            country_code=offer.country_code,
+            country_name=offer.country_name,
+            vpn_required=False,
+            offer_type=offer.offer_type,
+            priority_score=self.UNOWNED_PRIORITY,
+            via_bundle=None,
+        )
+
     def analyze(self, enrichment_result: EnrichmentResult) -> WatchStrategy:
         """
-        Analyze enrichment result and generate personalized watch strategy.
+        Analyze a fresh enrichment result.
 
-        Args:
-            enrichment_result: Result from TMDB enricher
-
-        Returns:
-            WatchStrategy with prioritized options
+        Thin wrapper over analyze_offers for the enrichment path.
         """
         if not enrichment_result.success or enrichment_result.match_confidence == "none":
             logger.warning("Cannot analyze: enrichment failed or no match")
             return WatchStrategy()
 
-        logger.info(
-            f"Analyzing watch strategy for {len(enrichment_result.streaming_offers)} offers"
-        )
+        return self.analyze_offers(enrichment_result.streaming_offers)
+
+    def analyze_offers(self, streaming_offers: list) -> WatchStrategy:
+        """
+        Rank offers against the user's subscriptions.
+
+        Takes any offer objects exposing provider_name, country_code,
+        country_name and offer_type, so it serves both the enricher's model
+        and the persisted one without a conversion step.
+        """
+        logger.info(f"Analyzing watch strategy for {len(streaming_offers)} offers")
 
         # Classify all offers
         owned_flatrate_offers = []  # Subscription streaming
         not_owned_offers = []
 
-        for offer in enrichment_result.streaming_offers:
+        for offer in streaming_offers:
             # Only consider flatrate (subscription) for owned providers
             if offer.offer_type != "flatrate":
                 continue
@@ -209,15 +228,12 @@ class WatchStrategyAnalyzer:
             # Try to match to owned subscription
             subscription = self._fuzzy_match_provider(offer.provider_name)
 
-            if subscription:
-                # Check if available in this country
-                if self._is_available_in_country(subscription, offer.country_code):
-                    owned_flatrate_offers.append((offer, subscription))
-                else:
-                    # Owned but not available in this country (e.g., Canal+ outside France)
-                    not_owned_offers.append(offer)
+            if subscription and self._is_available_in_country(subscription, offer.country_code):
+                owned_flatrate_offers.append((offer, subscription))
             else:
-                not_owned_offers.append(offer)
+                # Either not subscribed, or subscribed but not valid in this
+                # country (Canal+ outside France, say).
+                not_owned_offers.append(self._as_unowned_option(offer))
 
         # Separate base country vs VPN options
         best_option = None
@@ -260,7 +276,7 @@ class WatchStrategyAnalyzer:
 
         # Get rent/buy alternatives in base country
         base_country_alternatives = []
-        for offer in enrichment_result.streaming_offers:
+        for offer in streaming_offers:
             if offer.country_code == self.base_country and offer.offer_type in [
                 "rent",
                 "buy",

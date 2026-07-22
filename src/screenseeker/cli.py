@@ -14,483 +14,80 @@
 
 
 """
-ScreenSeeker CLI - Find where to watch films from your Letterboxd watchlist.
+ScreenSeeker CLI.
 
-A comprehensive CLI for managing your film watchlist, finding streaming availability,
-and tracking what you've watched.
+Plumbing only. Browsing, searching and filtering live in the web UI; this
+exists to set the tool up, keep the local mirror fresh, and start the server.
 """
 
 import sys
-from pathlib import Path
 
 import click
 
-from . import config, user_config
+from . import config, settings, user_config
 from .database import get_session, init_db
-from .database.session import get_database_info, reset_database
 from .enrichers import TMDBEnricher
-from .exporters import JSONExporter
 from .logger import get_logger, setup_logger
-from .scrapers import CSVScraper, HTMLScraper
-from .services import enrichment, find_watch_options, ingest_watchlist, library, parse_query
+from .scrapers import HTMLScraper
+from .services import enrichment, ingest_watchlist
 from .services.enrichment import enrich_films
 
-# Set up logging
 setup_logger(level=config.LOG_LEVEL, log_to_file=config.LOG_TO_FILE, use_colors=True)
 logger = get_logger(__name__)
+
+
+def _load_config_or_exit() -> dict:
+    """Read the config file, or explain how to create one and stop."""
+    try:
+        return user_config.load_config()
+    except Exception as e:
+        click.secho(f"❌ {e}", fg="red")
+        sys.exit(1)
+
+
+def _build_enricher(cfg: dict) -> TMDBEnricher:
+    """Construct a TMDB client, or stop if no key is configured."""
+    api_key = user_config.get_tmdb_api_key(cfg)
+    if not api_key:
+        click.secho("❌ TMDB API key not configured.", fg="red", bold=True)
+        click.echo("Run `screenseeker config init`, or set TMDB_API_KEY.")
+        sys.exit(1)
+
+    tmdb = cfg.get("tmdb", {})
+    return TMDBEnricher(
+        api_key=api_key,
+        rate_limit_per_second=tmdb.get("rate_limit", 5.0),
+        language=tmdb.get("language", "en-US"),
+    )
 
 
 @click.group()
 @click.version_option(version="0.1.0", prog_name="screenseeker")
 def cli():
     """
-    ScreenSeeker - Find where to watch films from your Letterboxd watchlist.
+    ScreenSeeker - find where to watch films from your Letterboxd watchlist.
 
     \b
-    🎬 Use Cases:
-      • Find where to watch any film with personalized recommendations
-      • Scrape your Letterboxd watchlist
-      • Build a personal film database with streaming data
-      • Query films by provider, country, or title
-      • Track watched status and add notes
-      • Generate statistics and reports
+    Typical use:
+      screenseeker config init    # first-time setup
+      screenseeker sync           # pull the watchlist from Letterboxd
+      screenseeker refresh        # fetch streaming availability from TMDB
+      screenseeker serve          # open the web UI
 
-    \b
-    Examples:
-      screenseeker watch "The Matrix (1999)"
-      screenseeker sync
-      screenseeker search matrix
-      screenseeker providers --provider Netflix --country FR
-
-    Use 'screenseeker COMMAND --help' for more information on a command.
+    Browsing and filtering live in the web UI.
     """
     pass
 
 
 # ==============================================================================
-# USE CASE 1: Find Where to Watch a Film
-# ==============================================================================
-
-
-@cli.command()
-@click.argument("title", required=False)
-@click.option("--year", "-y", type=int, help="Release year")
-@click.option("--force", "-f", is_flag=True, help="Force refresh (ignore cache)")
-def watch(title, year, force):
-    """
-    Find where to watch a film with personalized recommendations.
-
-    Data is fetched from TMDB and saved to the database for future queries.
-
-    \b
-    Examples:
-      screenseeker watch "The Matrix (1999)"
-      screenseeker watch "Inception" --year 2010
-      screenseeker watch "Arrival" --force  # Force refresh
-
-    If no title provided, enters interactive mode.
-    """
-    # Initialize database
-    init_db()
-
-    # Get input
-    if not title:
-        try:
-            title = click.prompt("Enter film title (with optional year)", type=str)
-        except (click.Abort, EOFError):
-            click.echo("\nCancelled")
-            return
-
-    # Parse here as well as in the service so the echo shows the year the
-    # lookup will actually use.
-    display_title, display_year = parse_query(title, year)
-    click.echo(f"🔍 Searching for: '{display_title}' ({display_year or 'no year specified'})")
-
-    # Load user config
-    try:
-        cfg = user_config.load_config()
-    except Exception as e:
-        click.secho(f"❌ {e}", fg="red")
-        sys.exit(1)
-
-    api_key = user_config.get_tmdb_api_key(cfg)
-    if not api_key:
-        click.secho("❌ TMDB API key not configured.", fg="red", bold=True)
-        click.echo("Run `screenseeker config init` to get started.")
-        sys.exit(1)
-
-    try:
-        with TMDBEnricher(
-            api_key=api_key,
-            rate_limit_per_second=cfg.get("tmdb", {}).get("rate_limit", 5.0),
-            language=cfg.get("tmdb", {}).get("language", "en-US"),
-        ) as enricher:
-            with get_session() as session:
-                result = find_watch_options(
-                    session,
-                    title,
-                    year,
-                    profile=user_config.get_subscription_profile(cfg),
-                    enricher=enricher,
-                    force_refresh=force,
-                )
-
-                if result.cache_age_seconds is None or not result.from_cache:
-                    click.secho("📊 Data freshly fetched from TMDB", fg="green")
-                else:
-                    days = int(result.cache_age_seconds // 86400)
-                    click.echo(f"📊 Using cached data ({days} day{'s' if days != 1 else ''} old)")
-
-                _display_watch_strategy(result.enrichment, result.strategy)
-
-                if result.year_mismatch:
-                    click.secho(
-                        f"\n📅 Note: Year mismatch - "
-                        f"Letterboxd: {result.letterboxd_year}, TMDB: {result.tmdb_year}",
-                        fg="yellow",
-                    )
-
-    except KeyboardInterrupt:
-        click.echo("\n\nOperation cancelled by user")
-        sys.exit(0)
-    except Exception as e:
-        click.secho(f"❌ Error: {e}", fg="red")
-        click.echo("\nFor more details, set LOG_LEVEL=DEBUG in your environment and re-run.")
-        if config.LOG_LEVEL == "DEBUG":
-            import traceback
-
-            click.echo("\nFull traceback:")
-            click.echo(traceback.format_exc())
-        sys.exit(1)
-
-
-# ==============================================================================
-# USE CASE 2: Scrape Letterboxd Watchlist
-# ==============================================================================
-
-
-@cli.command()
-@click.option(
-    "--method",
-    "-m",
-    type=click.Choice(["html", "csv"]),
-    help="Scraping method (overrides config)",
-)
-@click.option("--csv-file", "-c", type=click.Path(exists=True), help="Path to CSV export file")
-@click.option("--save-json/--no-save-json", default=True, help="Save result to JSON")
-def sync(method, csv_file, save_json):
-    """
-    Scrape your Letterboxd watchlist and save to database.
-
-    \b
-    Methods:
-      html  - Scrape live from Letterboxd.com (respects rate limits)
-      csv   - Import from Letterboxd CSV export (faster)
-
-    \b
-    Examples:
-      screenseeker sync                    # Use config.py settings
-      screenseeker sync --method html      # Force HTML scraping
-      screenseeker sync --method csv --csv-file watchlist.csv
-
-    The scraped films are automatically saved to the database.
-    """
-    # Determine scraping method (default: html)
-    scraper_type = method or "html"
-
-    # Create scraper
-    if scraper_type.lower() == "html":
-        try:
-            cfg = user_config.load_config()
-        except Exception as e:
-            click.secho(f"❌ {e}", fg="red")
-            sys.exit(1)
-        username = user_config.get_letterboxd_username(cfg)
-        if not username:
-            click.secho("❌ Letterboxd username not configured.", fg="red")
-            click.echo("Run `screenseeker config init` to set it up.")
-            sys.exit(1)
-        base_url = f"https://letterboxd.com/{username}/watchlist/"
-        click.echo(f"📡 Scraping {username}'s watchlist from Letterboxd...")
-        scraper = HTMLScraper(
-            base_url=base_url,
-            delay_between_requests=config.HTML_DELAY_BETWEEN_REQUESTS,
-            timeout=config.HTML_TIMEOUT,
-            save_raw_data=config.SAVE_RAW_DATA,
-            output_dir=config.OUTPUT_DIR,
-        )
-    elif scraper_type.lower() == "csv":
-        if not csv_file:
-            click.secho("❌ --csv-file is required when using CSV mode.", fg="red")
-            click.echo("Example: screenseeker sync --method csv --csv-file watchlist.csv")
-            sys.exit(1)
-        click.echo(f"📄 Importing watchlist from CSV: {csv_file}")
-        scraper = CSVScraper(
-            csv_file_path=csv_file,
-            save_raw_data=config.SAVE_RAW_DATA,
-            output_dir=config.OUTPUT_DIR,
-        )
-    else:
-        click.secho(f"❌ Invalid scraper type: {scraper_type}", fg="red")
-        sys.exit(1)
-
-    # Initialize database
-    init_db()
-
-    try:
-        with scraper:
-            click.echo("\n💾 Scraping and saving to database...")
-
-            with get_session() as session:
-                report = ingest_watchlist(session, scraper)
-
-            if not report.success:
-                click.secho(f"❌ Scraping failed: {report.error_message}", fg="red")
-                sys.exit(1)
-
-            if report.scraped == 0:
-                click.secho("⚠️  No films found", fg="yellow")
-                return
-
-            click.secho(f"\n✅ Scraped {report.scraped} films", fg="green", bold=True)
-            click.secho("\n✅ Database updated:", fg="green", bold=True)
-            click.echo(f"  • Added: {report.added} new films")
-            click.echo(f"  • Existing: {report.existing} films")
-
-            # Save to JSON
-            if save_json and report.scraping_result is not None:
-                output_file = JSONExporter.export_to_default_location(
-                    report.scraping_result, config.OUTPUT_DIR
-                )
-                click.echo(f"  • JSON saved: {output_file}")
-
-            click.echo("\n📊 Statistics:")
-            click.echo(
-                f"  • Films with year: {report.films_with_year} ({report.year_coverage:.1f}%)"
-            )
-
-            if report.source == "html":
-                click.echo(f"  • Pages scraped: {report.pages_scraped}")
-
-    except KeyboardInterrupt:
-        click.echo("\n\nOperation cancelled by user")
-        sys.exit(0)
-    except Exception as e:
-        click.secho(f"❌ Error: {e}", fg="red")
-        click.echo("\nFor more details, set LOG_LEVEL=DEBUG in your environment and re-run.")
-        if config.LOG_LEVEL == "DEBUG":
-            import traceback
-
-            click.echo("\nFull traceback:")
-            click.echo(traceback.format_exc())
-        sys.exit(1)
-
-
-# ==============================================================================
-# USE CASE 3 & 4: Database Management
-# ==============================================================================
-
-
-@cli.group()
-def db():
-    """Database management commands."""
-    pass
-
-
-@db.command()
-@click.option("--reset", is_flag=True, help="Reset database (delete all data)")
-def init(reset):
-    """
-    Initialize the database.
-
-    Creates tables and indexes. Safe to run multiple times.
-    Use --reset to delete all data and start fresh.
-    """
-    if reset:
-        if click.confirm("⚠️  This will DELETE ALL DATA. Continue?", abort=True):
-            reset_database()
-            click.secho("✅ Database reset complete", fg="green")
-
-    init_db()
-
-    # Show info
-    info = get_database_info()
-    click.echo("\n📊 Database Information:")
-    click.echo(f"  • Location: {info['path']}")
-    click.echo(f"  • Status: {'Exists' if info['exists'] else 'Created'}")
-
-    if info.get("size_mb"):
-        click.echo(f"  • Size: {info['size_mb']} MB")
-
-    if info.get("film_count") is not None:
-        click.echo(f"  • Films: {info['film_count']}")
-        click.echo(f"  • Streaming Offers: {info['offer_count']}")
-
-    click.secho("\n✅ Database is ready!", fg="green")
-
-
-@db.command()
-def stats():
-    """Show database statistics."""
-    init_db()
-
-    with get_session() as session:
-        stats = library.stats(session)
-
-        click.echo("\n📊 Database Statistics:\n")
-
-        # Films
-        click.secho("Films:", fg="cyan", bold=True)
-        click.echo(f"  • Total: {stats['total_films']}")
-        click.echo(f"  • Watched: {stats['watched_films']}")
-        click.echo(f"  • Unwatched: {stats['unwatched_films']}")
-
-        # TMDB matching
-        click.secho("\nTMDB Matching:", fg="cyan", bold=True)
-        click.echo(f"  • Matched: {stats['films_with_tmdb']}")
-        click.echo(f"  • Match rate: {stats['match_rate']}%")
-
-        # Streaming
-        click.secho("\nStreaming Data:", fg="cyan", bold=True)
-        click.echo(f"  • Total offers: {stats['total_offers']}")
-        click.echo(f"  • Unique providers: {stats['unique_providers']}")
-        click.echo(f"  • Unique countries: {stats['unique_countries']}")
-
-        # Maintenance
-        click.secho("\nMaintenance:", fg="cyan", bold=True)
-        click.echo(f"  • Needs refresh: {stats['stale_films']} films (>7 days old)")
-
-        # Database info
-        info = get_database_info()
-        if info.get("size_mb"):
-            click.secho("\nStorage:", fg="cyan", bold=True)
-            click.echo(f"  • Size: {info['size_mb']} MB")
-            click.echo(f"  • Location: {info['path']}")
-
-
-@db.command()
-@click.argument("path", type=click.Path(exists=True), required=False)
-@click.option("--all", "import_all", is_flag=True, help="Import all JSON files from output/")
-def import_json(path, import_all):
-    """
-    Import films from JSON export files.
-
-    \b
-    Examples:
-      screenseeker db import-json --all
-      screenseeker db import-json output/letterboxd_films_html_20251110.json
-    """
-    init_db()
-
-    # Determine files to import
-    if import_all:
-        json_files = list(config.OUTPUT_DIR.glob("letterboxd_films_*.json"))
-        if not json_files:
-            click.secho(f"⚠️  No JSON files found in {config.OUTPUT_DIR}", fg="yellow")
-            return
-
-        click.echo(f"Found {len(json_files)} JSON file(s):")
-        for f in json_files:
-            click.echo(f"  • {f.name}")
-        click.echo()
-    elif path:
-        json_files = [Path(path)]
-    else:
-        click.secho("❌ Specify a file path or use --all", fg="red")
-        sys.exit(1)
-
-    # Import files
-    total_imported = 0
-    total_skipped = 0
-
-    for json_file in json_files:
-        click.echo(f"📄 Processing: {json_file.name}")
-
-        imported, skipped = _import_json_file(json_file)
-        total_imported += imported
-        total_skipped += skipped
-
-        click.echo(f"  ✅ Imported: {imported}, ⏭️  Skipped: {skipped}\n")
-
-    # Summary
-    click.secho("✅ Migration complete!", fg="green", bold=True)
-    click.echo(f"  • Files processed: {len(json_files)}")
-    click.echo(f"  • Films imported: {total_imported}")
-    click.echo(f"  • Films skipped: {total_skipped}")
-
-
-# ==============================================================================
-# Config Management
+# Configuration
 # ==============================================================================
 
 
 @cli.group(name="config")
 def config_group():
-    """Manage your profile, subscriptions, and API settings."""
+    """Manage your configuration."""
     pass
-
-
-@config_group.command()
-def show():
-    """Display your current configuration."""
-    if not user_config.config_exists():
-        click.secho("No config found.", fg="yellow")
-        click.echo("Run `screenseeker config init` to get started.")
-        return
-
-    try:
-        cfg = user_config.load_config()
-    except Exception as e:
-        click.secho(f"❌ {e}", fg="red")
-        sys.exit(1)
-
-    tmdb = cfg.get("tmdb", {})
-    profile = cfg.get("profile", {})
-    subscriptions = profile.get("subscriptions", [])
-
-    click.echo(f"\nConfig: {user_config.CONFIG_PATH}\n")
-
-    letterboxd = cfg.get("letterboxd", {})
-    click.secho("Letterboxd", fg="cyan", bold=True)
-    lb_username = letterboxd.get("username", "")
-    if lb_username:
-        click.echo(f"  Username : {lb_username}")
-    else:
-        click.secho("  Username : (not set)", fg="red")
-
-    click.secho("\nTMDB", fg="cyan", bold=True)
-    api_key = tmdb.get("api_key", "")
-    if api_key:
-        masked = "•" * max(0, len(api_key) - 4) + api_key[-4:]
-        click.echo(f"  API key    : {masked}")
-    else:
-        click.secho("  API key    : (not set)", fg="red")
-    click.echo(f"  Language   : {tmdb.get('language', 'en-US')}")
-    click.echo(f"  Rate limit : {tmdb.get('rate_limit', 5.0)} req/s")
-
-    click.secho("\nProfile", fg="cyan", bold=True)
-    click.echo(f"  Base country    : {profile.get('base_country', 'FR')}")
-    click.echo(f"  Max VPN options : {profile.get('max_vpn_suggestions', 3)}")
-
-    click.secho("\nSubscriptions", fg="cyan", bold=True)
-    if not subscriptions:
-        click.secho("  (none)", fg="yellow")
-        click.echo("  Add one with: screenseeker config add")
-    else:
-        for i, sub in enumerate(subscriptions, 1):
-            names = sub.get("provider_names", [])
-            vpn = "✓" if sub.get("vpn_enabled") else "✗"
-            countries = sub.get("available_countries", [])
-            countries_str = "all" if countries == "all" else ", ".join(countries)
-            bundles = sub.get("bundle_includes", [])
-            line = f"  {i}. {names[0]:<18} VPN {vpn}  Countries: {countries_str}"
-            if bundles:
-                line += f"   Bundle: {', '.join(bundles[:2])}"
-                if len(bundles) > 2:
-                    line += f" +{len(bundles) - 2} more"
-            click.echo(line)
-
-    click.echo()
 
 
 @config_group.command(name="init")
@@ -504,9 +101,7 @@ def config_init():
 
     click.echo("\nWelcome to Screenseeker! Let's set up your profile.\n")
 
-    username = click.prompt("Your Letterboxd username")
-    username = username.strip()
-
+    username = click.prompt("Your Letterboxd username").strip()
     base_country = click.prompt("Your base country code (e.g. FR, US, GB)", default="FR")
     base_country = base_country.upper().strip()
 
@@ -526,15 +121,8 @@ def config_init():
 
         vpn_enabled = click.confirm("  VPN enabled?", default=False)
 
-        if vpn_enabled:
-            all_countries = click.confirm("  Available in all countries?", default=True)
-            if all_countries:
-                available_countries = "all"
-            else:
-                countries_input = click.prompt("  Countries (comma-separated)")
-                available_countries = [
-                    c.strip().upper() for c in countries_input.split(",") if c.strip()
-                ]
+        if vpn_enabled and click.confirm("  Available in all countries?", default=True):
+            available_countries = "all"
         else:
             countries_input = click.prompt("  Countries (comma-separated)")
             available_countries = [
@@ -561,142 +149,25 @@ def config_init():
         click.echo()
         i += 1
 
-    cfg = {
-        "letterboxd": {
-            "username": username,
-        },
-        "tmdb": {
-            "api_key": api_key,
-            "rate_limit": 5.0,
-            "language": "en-US",
-        },
-        "profile": {
-            "base_country": base_country,
-            "max_vpn_suggestions": 3,
-            "vpn_country_priority": user_config.DEFAULT_VPN_PRIORITY,
-            "subscriptions": subscriptions,
-        },
-    }
-    user_config.save_config(cfg)
-    click.secho(f"\n✓ Saved to {user_config.CONFIG_PATH}", fg="green")
-    click.echo("Run `screenseeker config show` to review your setup.")
-
-
-@config_group.command()
-def add():
-    """Add a streaming subscription (interactive prompts)."""
-    if not user_config.config_exists():
-        click.secho("No config found. Run `screenseeker config init` first.", fg="red")
-        sys.exit(1)
-
-    try:
-        cfg = user_config.load_config()
-    except Exception as e:
-        click.secho(f"❌ {e}", fg="red")
-        sys.exit(1)
-
-    click.echo()
-    provider_name = click.prompt("Provider name")
-    if not provider_name.strip():
-        click.echo("Cancelled.")
-        return
-
-    vpn_enabled = click.confirm("VPN enabled?", default=False)
-
-    if vpn_enabled:
-        all_countries = click.confirm("Available in all countries?", default=True)
-        if all_countries:
-            available_countries = "all"
-        else:
-            countries_input = click.prompt("Countries (comma-separated)")
-            available_countries = [
-                c.strip().upper() for c in countries_input.split(",") if c.strip()
-            ]
-    else:
-        countries_input = click.prompt("Countries (comma-separated)")
-        available_countries = [c.strip().upper() for c in countries_input.split(",") if c.strip()]
-
-    bundles_input = click.prompt(
-        "Bundles other services? (comma-separated, or Enter to skip)",
-        default="",
-        show_default=False,
+    user_config.save_config(
+        {
+            "letterboxd": {"username": username},
+            "tmdb": {"api_key": api_key, "rate_limit": 5.0, "language": "en-US"},
+            "profile": {
+                "base_country": base_country,
+                "max_vpn_suggestions": 3,
+                "vpn_country_priority": user_config.DEFAULT_VPN_PRIORITY,
+                "subscriptions": subscriptions,
+            },
+        }
     )
-    bundle_includes = [b.strip() for b in bundles_input.split(",") if b.strip()]
-
-    sub = {
-        "provider_names": [provider_name.strip()],
-        "vpn_enabled": vpn_enabled,
-        "available_countries": available_countries,
-    }
-    if bundle_includes:
-        sub["bundle_includes"] = bundle_includes
-
-    cfg.setdefault("profile", {}).setdefault("subscriptions", []).append(sub)
-    user_config.save_config(cfg)
-    click.secho(f"\n✓ {provider_name} added.", fg="green")
-
-
-@config_group.command()
-@click.argument("provider")
-def remove(provider):
-    """Remove a subscription by provider name."""
-    if not user_config.config_exists():
-        click.secho("No config found. Run `screenseeker config init` first.", fg="red")
-        sys.exit(1)
-
-    try:
-        cfg = user_config.load_config()
-    except Exception as e:
-        click.secho(f"❌ {e}", fg="red")
-        sys.exit(1)
-
-    subscriptions = cfg.get("profile", {}).get("subscriptions", [])
-    provider_lower = provider.lower()
-
-    match_idx = None
-    for i, sub in enumerate(subscriptions):
-        names = [n.lower() for n in sub.get("provider_names", [])]
-        if any(provider_lower in n for n in names):
-            match_idx = i
-            break
-
-    if match_idx is None:
-        click.secho(f"❌ No subscription found matching '{provider}'.", fg="red")
-        click.echo("Run `screenseeker config show` to see your subscriptions.")
-        sys.exit(1)
-
-    matched_name = subscriptions[match_idx]["provider_names"][0]
-    if not click.confirm(f"Remove {matched_name} from your subscriptions?"):
-        click.echo("Cancelled.")
-        return
-
-    cfg["profile"]["subscriptions"].pop(match_idx)
-    user_config.save_config(cfg)
-    click.secho(f"✓ Removed {matched_name}.", fg="green")
-
-
-@config_group.command("set-country")
-@click.argument("country_code")
-def set_country(country_code):
-    """Set your base country (e.g. FR, US, GB)."""
-    if not user_config.config_exists():
-        click.secho("No config found. Run `screenseeker config init` first.", fg="red")
-        sys.exit(1)
-
-    try:
-        cfg = user_config.load_config()
-    except Exception as e:
-        click.secho(f"❌ {e}", fg="red")
-        sys.exit(1)
-
-    cfg.setdefault("profile", {})["base_country"] = country_code.upper().strip()
-    user_config.save_config(cfg)
-    click.secho(f"✓ Base country set to {country_code.upper().strip()}.", fg="green")
+    click.secho(f"\n✓ Saved to {user_config.CONFIG_PATH}", fg="green")
+    click.echo("Next: screenseeker sync")
 
 
 @config_group.command()
 def edit():
-    """Open the config file in your default editor."""
+    """Open the config file in your editor."""
     if not user_config.config_exists():
         click.secho("No config found. Run `screenseeker config init` first.", fg="red")
         sys.exit(1)
@@ -704,663 +175,185 @@ def edit():
     click.edit(filename=str(user_config.CONFIG_PATH))
 
 
-# ==============================================================================
-# USE CASE 5: Search & Query Films
-# ==============================================================================
-
-
-@cli.command()
-@click.argument("query")
-@click.option("--limit", "-l", default=10, help="Maximum results to show")
-def search(query, limit):
-    """
-    Search films by title (case-insensitive partial match).
-
-    \b
-    Examples:
-      screenseeker search matrix
-      screenseeker search "blade runner" --limit 5
-    """
-    init_db()
-
-    with get_session() as session:
-        results = library.search(session, query, limit=limit)
-
-    if not results:
-        click.secho(f"No films found matching '{query}'", fg="yellow")
-        return
-
-    click.echo(f"\n🔍 Found {len(results)} film(s) matching '{query}':\n")
-
-    for film in results:
-        # Title and year
-        click.secho(f"📽️  {film.full_title}", fg="cyan", bold=True)
-
-        # TMDB info
-        if film.tmdb_id:
-            click.echo(f"   TMDB ID: {film.tmdb_id} | Match: {film.match_confidence}")
-            if film.year_mismatch:
-                click.secho(
-                    f"   ⚠️  Year mismatch: Letterboxd={film.letterboxd_year}, "
-                    f"TMDB={film.tmdb_year}",
-                    fg="yellow",
-                )
-        else:
-            click.secho("   ⚠️  Not enriched yet", fg="yellow")
-
-        # Status
-        if film.watched:
-            click.secho("   ✓ Watched", fg="green")
-            if film.watched_at:
-                click.echo(f"     on {film.watched_at.strftime('%Y-%m-%d')}")
-        else:
-            click.echo("   ☐ Unwatched")
-
-        # Streaming offers count
-        if film.offer_count:
-            click.echo(f"   📊 {film.offer_count} streaming offers")
-
-            if film.cache_age_days is not None and film.cache_age_days > 7:
-                click.secho(f"   ⚠️  Data is {film.cache_age_days} days old", fg="yellow")
-
-        click.echo()
-
-
-@cli.command()
-@click.option("--provider", "-p", required=True, help="Provider name (e.g., Netflix)")
-@click.option("--country", "-c", help="Country code (e.g., FR, US)")
-@click.option(
-    "--type",
-    "-t",
-    "offer_type",
-    type=click.Choice(["flatrate", "rent", "buy", "free", "ads"]),
-    help="Monetization type",
-)
-@click.option("--limit", "-l", type=int, help="Maximum results to show")
-def providers(provider, country, offer_type, limit):
-    """
-    List films available on a specific provider.
-
-    \b
-    Examples:
-      screenseeker providers --provider Netflix
-      screenseeker providers --provider "Prime Video" --country US
-      screenseeker providers -p Netflix -c FR --type flatrate
-    """
-    init_db()
-
-    with get_session() as session:
-        films, total = library.list_by_provider(
-            session,
-            provider,
-            country=country,
-            offer_type=offer_type,
-            limit=limit,
-        )
-
-    if not films:
-        msg = f"No films found on {provider}"
-        if country:
-            msg += f" in {country}"
-        if offer_type:
-            msg += f" ({offer_type})"
-        click.secho(msg, fg="yellow")
-        return
-
-    # Header
-    title = f"Films on {provider}"
-    if country:
-        title += f" in {country}"
-    if offer_type:
-        title += f" ({offer_type})"
-
-    click.echo(f"\n📺 {title}:\n")
-    click.secho(f"Found {total} film(s)", fg="green")
-    click.echo()
-
-    for i, film in enumerate(films, 1):
-        status = "✓" if film.watched else "☐"
-        click.echo(f"{i:3}. {status} {film.full_title}")
-
-    if limit and total > limit:
-        click.echo(f"\n... and {total - limit} more")
-        click.echo(f"Use --limit {total} to see all")
-
-
-@cli.command()
-@click.option("--country", "-c", required=True, help="Country code (e.g., FR, US)")
-@click.option(
-    "--type",
-    "-t",
-    "offer_type",
-    type=click.Choice(["flatrate", "rent", "buy", "free", "ads"]),
-    help="Monetization type",
-)
-def country(country, offer_type):
-    """
-    List films available in a specific country.
-
-    \b
-    Examples:
-      screenseeker country --country FR
-      screenseeker country -c US --type flatrate
-    """
-    init_db()
-
-    with get_session() as session:
-        films, total = library.list_by_country(session, country, offer_type=offer_type)
-
-    if not films:
-        msg = f"No films found in {country}"
-        if offer_type:
-            msg += f" ({offer_type})"
-        click.secho(msg, fg="yellow")
-        return
-
-    click.echo(f"\n🌍 Films available in {country}:\n")
-    click.secho(f"Found {total} film(s)", fg="green")
-    click.echo()
-
-    for i, film in enumerate(films, 1):
-        status = "✓" if film.watched else "☐"
-        click.echo(f"{i:3}. {status} {film.full_title}")
+@config_group.command()
+def path():
+    """Print where the config and database live."""
+    click.echo(f"config:   {user_config.CONFIG_PATH}")
+    click.echo(f"database: {settings.DB_PATH}")
 
 
 # ==============================================================================
-# USE CASE 6: Track Watched Status
+# Keeping the mirror fresh
 # ==============================================================================
 
 
 @cli.command()
-@click.option("--list", "show_list", is_flag=True, help="Show watchlist")
-@click.option("--count", is_flag=True, help="Show count only")
-def watchlist(show_list, count):
+def sync():
     """
-    Show your unwatched films.
+    Pull your Letterboxd watchlist into the local database.
 
-    \b
-    Examples:
-      screenseeker watchlist
-      screenseeker watchlist --count
+    Adds films that are new to the watchlist. Streaming availability is
+    fetched separately by `screenseeker refresh`.
     """
-    init_db()
+    cfg = _load_config_or_exit()
 
-    with get_session() as session:
-        if count:
-            click.echo(f"{library.count_unwatched(session)}")
-            return
-
-        films = library.list_unwatched(session)
-
-    if not films:
-        click.secho("✅ No unwatched films! Time to add more to your watchlist.", fg="green")
-        return
-
-    click.echo(f"\n📋 Your Watchlist ({len(films)} unwatched films):\n")
-
-    for i, film in enumerate(films, 1):
-        click.echo(f"{i:3}. {film.full_title}")
-
-        # Show if enriched
-        if not film.tmdb_id:
-            click.secho(
-                f'     ⚠️  Not enriched yet - run: screenseeker watch "{film.full_title}"',
-                fg="yellow",
-                dim=True,
-            )
-
-
-@cli.command()
-@click.argument("title")
-@click.option("--year", "-y", type=int, help="Release year")
-@click.option("--unwatch", is_flag=True, help="Mark as unwatched")
-def watched(title, year, unwatch):
-    """
-    Mark a film as watched or unwatched.
-
-    \b
-    Examples:
-      screenseeker watched "The Matrix"
-      screenseeker watched "Inception" --year 2010
-      screenseeker watched "The Matrix" --unwatch
-    """
-    init_db()
-
-    with get_session() as session:
-        film = library.set_watched(session, title, year, watched=not unwatch)
-
-    if not film:
-        click.secho(f"❌ Film not found: {title} ({year or 'any year'})", fg="red")
-        click.echo("\n💡 Suggestions:")
-        click.echo(f'   • Try searching: screenseeker search "{title}"')
-        click.echo(f'   • Or enrich it first: screenseeker watch "{title}"')
-        if not year:
-            click.echo(f'   • Try adding the year: screenseeker watched "{title}" --year YYYY')
+    username = user_config.get_letterboxd_username(cfg)
+    if not username:
+        click.secho("❌ Letterboxd username not configured.", fg="red")
+        click.echo("Run `screenseeker config init` to set it up.")
         sys.exit(1)
 
-    if unwatch:
-        click.secho(f"☐ Marked '{film.full_title}' as unwatched", fg="yellow")
-    else:
-        click.secho(f"✓ Marked '{film.full_title}' as watched!", fg="green")
+    init_db()
+    click.echo(f"📡 Scraping {username}'s watchlist from Letterboxd...")
 
+    scraper = HTMLScraper(
+        base_url=f"https://letterboxd.com/{username}/watchlist/",
+        delay_between_requests=config.HTML_DELAY_BETWEEN_REQUESTS,
+        timeout=config.HTML_TIMEOUT,
+        save_raw_data=False,
+        output_dir=config.OUTPUT_DIR,
+    )
 
-# ==============================================================================
-# USE CASE 7: Batch Operations
-# ==============================================================================
+    try:
+        with scraper, get_session() as session:
+            report = ingest_watchlist(session, scraper)
+    except KeyboardInterrupt:
+        click.echo("\n\nCancelled")
+        sys.exit(0)
+    except Exception as e:
+        click.secho(f"❌ Error: {e}", fg="red")
+        sys.exit(1)
+
+    if not report.success:
+        click.secho(f"❌ Scraping failed: {report.error_message}", fg="red")
+        sys.exit(1)
+
+    if report.scraped == 0:
+        click.secho("⚠️  No films found", fg="yellow")
+        return
+
+    click.secho(f"\n✅ Scraped {report.scraped} films", fg="green", bold=True)
+    click.echo(f"  • Added: {report.added} new")
+    click.echo(f"  • Already known: {report.existing}")
+    click.echo(f"  • Pages: {report.pages_scraped}")
+
+    if report.added:
+        click.echo("\nNext: screenseeker refresh")
 
 
 @cli.command()
-@click.option("--days", "-d", default=7, help="Consider films stale after N days")
+@click.option("--days", "-d", default=None, type=int, help="Refresh data older than N days")
 @click.option("--limit", "-l", type=int, help="Maximum films to refresh")
-@click.option("--dry-run", is_flag=True, help="Show what would be refreshed without doing it")
-def refresh(days, limit, dry_run):
+@click.option("--dry-run", is_flag=True, help="Show what would be refreshed")
+@click.option("--yes", "-y", is_flag=True, help="Skip the confirmation prompt")
+def refresh(days, limit, dry_run, yes):
     """
-    Refresh stale streaming data from TMDB.
+    Fetch streaming availability from TMDB for films that need it.
 
-    Finds films whose streaming data is older than N days and refreshes them.
-
-    \b
-    Examples:
-      screenseeker refresh                # Refresh films >7 days old
-      screenseeker refresh --days 30      # Only films >30 days old
-      screenseeker refresh --limit 10     # Refresh max 10 films
-      screenseeker refresh --dry-run      # See what would be refreshed
+    Covers both films that have never been checked and those whose data has
+    aged past the cache TTL - a film that was never checked is stale.
     """
+    days = settings.CACHE_TTL_DAYS if days is None else days
+    cfg = _load_config_or_exit()
+
     init_db()
 
-    # Load user config
-    try:
-        cfg = user_config.load_config()
-    except Exception as e:
-        click.secho(f"❌ {e}", fg="red")
-        sys.exit(1)
-
-    api_key = user_config.get_tmdb_api_key(cfg)
-    if not api_key:
-        click.secho("❌ TMDB API key not configured.", fg="red", bold=True)
-        click.echo("Run `screenseeker config init` to get started.")
-        sys.exit(1)
-
     with get_session() as session:
-        stale_films, _ = enrichment.select_stale(session, days=days, limit=limit)
+        films, total = enrichment.select_stale(session, days=days, limit=limit)
 
-        if not stale_films:
-            click.secho(f"✅ All films are fresh! (checked within {days} days)", fg="green")
+        if not films:
+            click.secho(f"✅ Everything is fresh (checked within {days} days)", fg="green")
             return
 
-        click.echo(f"\n🔄 Found {len(stale_films)} film(s) to refresh:\n")
-
-        for film in stale_films:
-            age_str = (
-                "never checked"
-                if film.cache_age_days is None
-                else f"{film.cache_age_days} days old"
-            )
-            click.echo(f"  • {film.full_title} ({age_str})")
-
-        if dry_run:
-            click.echo("\n(Dry run - no changes made)")
-            return
-
-        if not click.confirm(f"\nRefresh {len(stale_films)} film(s)?"):
-            click.echo("Cancelled")
-            return
-
-        # Refresh films
-        click.echo()
-
-        with TMDBEnricher(
-            api_key=api_key,
-            rate_limit_per_second=cfg.get("tmdb", {}).get("rate_limit", 5.0),
-            language=cfg.get("tmdb", {}).get("language", "en-US"),
-        ) as enricher:
-            with click.progressbar(length=len(stale_films), label="Refreshing") as bar:
-                report = enrich_films(
-                    session,
-                    enricher,
-                    stale_films,
-                    force_refresh=True,
-                    on_progress=lambda done, total, title: bar.update(1),
-                )
-
-        for failure in report.errors:
-            click.echo(f"\n⚠️  Error refreshing {failure.title}: {failure.error}")
-
-        click.secho(f"\n✅ Refreshed {report.succeeded} film(s)!", fg="green")
-
-
-@cli.command()
-@click.option("--limit", "-l", type=int, help="Maximum films to enrich")
-@click.option(
-    "--unenriched-only",
-    is_flag=True,
-    default=True,
-    help="Only enrich films without TMDB data (default)",
-)
-@click.option(
-    "--all",
-    "enrich_all",
-    is_flag=True,
-    help="Enrich all films (including already enriched)",
-)
-@click.option("--dry-run", is_flag=True, help="Show what would be enriched without doing it")
-def enrich(limit, unenriched_only, enrich_all, dry_run):
-    """
-    Batch enrich films from your watchlist with TMDB data.
-
-    Finds films in your database and fetches streaming availability from TMDB.
-    By default, only enriches films that haven't been enriched yet.
-
-    \b
-    Examples:
-      screenseeker enrich                      # Enrich all unenriched films
-      screenseeker enrich --limit 10           # Enrich max 10 films
-      screenseeker enrich --all                # Re-enrich everything
-      screenseeker enrich --dry-run            # Preview what would be enriched
-    """
-    init_db()
-
-    # Load user config
-    try:
-        cfg = user_config.load_config()
-    except Exception as e:
-        click.secho(f"❌ {e}", fg="red")
-        sys.exit(1)
-
-    api_key = user_config.get_tmdb_api_key(cfg)
-    if not api_key:
-        click.secho("❌ TMDB API key not configured.", fg="red", bold=True)
-        click.echo("Run `screenseeker config init` to get started.")
-        sys.exit(1)
-
-    with get_session() as session:
-        # Get films to enrich
-        if enrich_all:
-            films_to_enrich, total_found = enrichment.select_all(session, limit=limit)
-            mode = "all"
-        else:
-            films_to_enrich, total_found = enrichment.select_unenriched(session, limit=limit)
-            mode = "unenriched"
-
-        if not films_to_enrich:
-            if mode == "unenriched":
-                click.secho("✅ All films are already enriched!", fg="green")
-                click.echo("\nUse --all to re-enrich everything")
-            else:
-                click.secho("⚠️  No films found in database", fg="yellow")
-                click.echo("\nRun 'screenseeker sync' first to import your watchlist")
-            return
-
-        click.echo(f"\n🔍 Found {total_found} {mode} film(s)")
-        if limit and total_found > limit:
-            click.echo(f"   Limiting to {limit} films\n")
-        else:
-            click.echo()
-
-        # Show preview
-        click.echo("Films to enrich:\n")
-        for i, film in enumerate(films_to_enrich[:10], 1):
-            click.echo(f"  {i:3}. {film.full_title}")
-
-        if len(films_to_enrich) > 10:
-            click.echo(f"  ... and {len(films_to_enrich) - 10} more")
-
-        if dry_run:
-            click.echo("\n(Dry run - no changes made)")
-            return
-
-        click.echo()
-        if not click.confirm(f"Enrich {len(films_to_enrich)} film(s)?"):
-            click.echo("Cancelled")
-            return
-
-        # Enrich films
-        click.echo()
-
-        with TMDBEnricher(
-            api_key=api_key,
-            rate_limit_per_second=cfg.get("tmdb", {}).get("rate_limit", 5.0),
-            language=cfg.get("tmdb", {}).get("language", "en-US"),
-        ) as enricher:
-            with click.progressbar(length=len(films_to_enrich), label="Enriching") as bar:
-                report = enrich_films(
-                    session,
-                    enricher,
-                    films_to_enrich,
-                    force_refresh=enrich_all,  # Force if enriching all
-                    on_progress=lambda done, total, title: bar.update(1),
-                )
-
-        # Summary
-        click.echo()
-        click.secho(f"✅ Successfully enriched: {report.succeeded} film(s)", fg="green")
-
-        if report.failed > 0:
-            click.secho(f"⚠️  Errors: {report.failed} film(s)", fg="yellow")
-            click.echo("\nFailed films:")
-            for failure in report.errors[:5]:
-                click.echo(f"  • {failure.title}: {failure.error}")
-            if report.failed > 5:
-                click.echo(f"  ... and {report.failed - 5} more errors")
-
-        # Show what to do next
-        if report.succeeded > 0:
-            click.echo("\n💡 Next steps:")
-            click.echo("  • View your films: screenseeker search <title>")
-            click.echo("  • Check availability: screenseeker report")
-            click.echo("  • Query by provider: screenseeker providers --provider Netflix")
-
-
-# ==============================================================================
-# USE CASE 8: Reports & Statistics
-# ==============================================================================
-
-
-@cli.command()
-@click.option("--provider", "-p", multiple=True, help="Providers to check (can specify multiple)")
-def report(provider):
-    """
-    Generate availability report for your subscriptions.
-
-    Shows how many films are available on each provider.
-
-    \b
-    Examples:
-      screenseeker report
-      screenseeker report --provider Netflix --provider "Prime Video"
-    """
-    init_db()
-
-    # Load user config
-    try:
-        cfg = user_config.load_config()
-    except Exception as e:
-        click.secho(f"❌ {e}", fg="red")
-        sys.exit(1)
-
-    profile = user_config.get_subscription_profile(cfg)
-
-    # Get providers from config or args
-    if provider:
-        providers = list(provider)
-    else:
-        providers = []
-        for sub in profile.get("subscriptions", []):
-            providers.extend(sub["provider_names"])
-
-    if not providers:
-        click.secho("❌ No providers configured.", fg="red")
-        click.echo("Add subscriptions with: screenseeker config add")
-        sys.exit(1)
-
-    base_country = profile.get("base_country", "FR")
-
-    click.echo(f"\n📊 Availability Report ({base_country}):\n")
-
-    with get_session() as session:
-        by_provider = {
-            provider_name: library.list_by_provider(
-                session,
-                provider_name,
-                country=base_country,
-                offer_type="flatrate",
-            )
-            for provider_name in providers
-        }
-
-    for provider_name, (films, total) in by_provider.items():
-        click.secho(f"📺 {provider_name}", fg="cyan", bold=True)
-        click.echo(f"   {total} film(s) available")
-
-        for film in films:
-            status = "✓" if film.watched else "☐"
-            click.echo(f"   {status} {film.full_title}")
-
-        click.echo()
-
-
-# ==============================================================================
-# Helper Functions
-# ==============================================================================
-
-
-def _display_watch_strategy(result, strategy):
-    """Display personalized watch strategy."""
-    click.echo("\n" + "=" * 80)
-    click.secho("HOW TO WATCH", fg="cyan", bold=True)
-    click.echo("=" * 80)
-
-    # Query info
-    click.echo(f"\n📽️  '{result.query_title}' ({result.query_year or 'no year'})")
-
-    # Match status
-    if not result.success:
-        click.secho(f"\n❌ Enrichment failed: {result.error_message}", fg="red")
-        return
-
-    if result.match_confidence == "none":
-        click.secho("\n⚠️  No match found on TMDB", fg="yellow")
-        return
-
-    # TMDB match
-    movie = result.tmdb_movie
-    confidence_emoji = {"exact": "🎯", "high": "✅", "medium": "⚠️", "low": "❓"}.get(
-        result.match_confidence, "❓"
-    )
-
-    click.echo(
-        f"{confidence_emoji} TMDB Match: {movie.title} ({movie.year or 'N/A'}) - Confidence: {result.match_confidence}"
-    )
-    if movie.vote_average:
-        click.echo(f"   ⭐ Rating: {movie.vote_average}/10")
-
-    # Check if any watching options available
-    if not strategy.has_any_option():
-        click.secho("\n❌ NOT AVAILABLE on your subscriptions", fg="red", bold=True)
         click.echo(
-            f"   Available globally in {result.total_countries} countries on {result.total_providers} providers"
+            f"\n🔄 {total} film(s) need refreshing" + (f", doing {len(films)}" if limit else "")
         )
-        click.echo("=" * 80)
-        return
+        click.echo()
 
-    # Best option (no VPN needed)
-    if strategy.best_option:
-        click.secho("\n✅ WATCH NOW (No VPN needed):", fg="green", bold=True)
-        opt = strategy.best_option
-        if opt.via_bundle:
-            click.echo(f"   🇫🇷 {opt.provider} (via {opt.via_bundle}) - {opt.country_name}")
-        else:
-            click.echo(f"   🇫🇷 {opt.provider} - {opt.country_name}")
+        for film in films[:10]:
+            age = "never checked" if film.cache_age_days is None else f"{film.cache_age_days}d old"
+            click.echo(f"  • {film.full_title} ({age})")
+        if len(films) > 10:
+            click.echo(f"  ... and {len(films) - 10} more")
 
-    # VPN options
-    if strategy.vpn_options:
-        click.secho("\n🌍 VPN OPTIONS:", fg="blue", bold=True)
-        for opt in strategy.vpn_options:
-            if opt.via_bundle:
-                click.echo(
-                    f"   {opt.provider} (via {opt.via_bundle}) - Connect to {opt.country_name}"
-                )
-            else:
-                click.echo(f"   {opt.provider} - Connect to {opt.country_name}")
+        if dry_run:
+            click.echo("\n(Dry run - no changes made)")
+            return
 
-    # Rent/Buy alternatives
-    if strategy.base_country_alternatives:
-        click.secho("\n💰 RENT/BUY:", fg="yellow", bold=True)
-        rent_providers = [
-            opt.provider for opt in strategy.base_country_alternatives if opt.offer_type == "rent"
-        ]
-        buy_providers = [
-            opt.provider for opt in strategy.base_country_alternatives if opt.offer_type == "buy"
-        ]
+        if not yes and not click.confirm(f"\nRefresh {len(films)} film(s)?"):
+            click.echo("Cancelled")
+            return
 
-        if rent_providers:
-            click.echo(f"   Rent: {', '.join(rent_providers)}")
-        if buy_providers:
-            click.echo(f"   Buy: {', '.join(buy_providers)}")
+        click.echo()
+        try:
+            with _build_enricher(cfg) as enricher:
+                with click.progressbar(length=len(films), label="Refreshing") as bar:
+                    report = enrich_films(
+                        session,
+                        enricher,
+                        films,
+                        force_refresh=True,
+                        on_progress=lambda done, total_, title: bar.update(1),
+                    )
+        except KeyboardInterrupt:
+            click.echo("\n\nCancelled - films already refreshed are saved")
+            sys.exit(0)
 
-    # Summary
-    click.echo("\n📊 Summary:")
-    click.echo(f"   Global: {result.total_countries} countries, {result.total_providers} providers")
-    click.echo(f"   Your subscriptions: {len(strategy.all_owned_options)} options")
+    click.secho(f"\n✅ Refreshed {report.succeeded} film(s)", fg="green")
 
-    click.echo("\n" + "=" * 80)
+    if report.failed:
+        click.secho(f"⚠️  Failed: {report.failed}", fg="yellow")
+        for failure in report.errors[:5]:
+            click.echo(f"  • {failure.title}: {failure.error}")
+        if report.failed > 5:
+            click.echo(f"  ... and {report.failed - 5} more")
 
 
-def _import_json_file(json_path):
-    """Import films from JSON file."""
-    import json
+# ==============================================================================
+# Web UI
+# ==============================================================================
 
+
+@cli.command()
+@click.option("--host", default=None, help=f"Bind address (default {settings.HOST})")
+@click.option("--port", "-p", default=None, type=int, help=f"Port (default {settings.PORT})")
+@click.option("--reload", is_flag=True, help="Reload on code changes (development)")
+def serve(host, port, reload):
+    """
+    Start the web UI.
+
+    Binds to loopback unless told otherwise. Exposing it beyond this machine
+    is a deliberate act - put it behind a VPN or an authenticating proxy.
+    """
     try:
-        with open(json_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as e:
-        click.secho(f"Failed to read JSON: {e}", fg="red")
-        return 0, 0
+        import uvicorn
+    except ImportError:
+        click.secho("❌ uvicorn is not installed.", fg="red")
+        click.echo("Install the web extras: pip install 'screenseeker[web]'")
+        sys.exit(1)
 
-    # Handle different JSON structures
-    films = []
-    if isinstance(data, dict):
-        if "films" in data:
-            films = data["films"]
-    elif isinstance(data, list):
-        films = data
+    init_db()
 
-    if not films:
-        return 0, 0
+    host = host or settings.HOST
+    port = port or settings.PORT
 
-    imported = 0
-    skipped = 0
+    click.secho(f"\n🎬 ScreenSeeker on http://{host}:{port}\n", fg="cyan", bold=True)
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        click.secho(
+            "⚠️  Bound beyond loopback. There is no authentication - "
+            "only do this behind a VPN or an authenticating proxy.",
+            fg="yellow",
+        )
 
-    with get_session() as session:
-        from .database.queries import get_or_create_film
+    uvicorn.run(
+        "screenseeker.web.app:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        reload=reload,
+        log_level="info" if settings.DEBUG else "warning",
+    )
 
-        for film_data in films:
-            try:
-                title = film_data.get("film_title") or film_data.get("title")
-                year = film_data.get("year")
-
-                if not title:
-                    skipped += 1
-                    continue
-
-                film, created = get_or_create_film(session, title, year)
-
-                if created:
-                    imported += 1
-                else:
-                    skipped += 1
-
-            except Exception:
-                skipped += 1
-
-        session.commit()
-
-    return imported, skipped
-
-
-# ==============================================================================
-# Entry Point
-# ==============================================================================
 
 if __name__ == "__main__":
     cli()
