@@ -12,14 +12,18 @@ One module until it earns splitting. Rules that hold throughout:
 
 from math import ceil
 from typing import Annotated, Literal, NamedTuple, Optional, get_args
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 
+from .. import settings
 from ..enrichers.watch_strategy import WatchOption, WatchStrategy
 from ..exceptions import JobAlreadyRunning
 from ..services import jobs, library
+from ..services import profile as profile_service
+from ..services import watch
 from ..services.models import FilmDetail, OfferOut
 from ..services.watch import find_watch_options
 from .deps import get_db, get_profile, require_user
@@ -190,6 +194,54 @@ def film_detail(
     return render(request, "film.html", context)
 
 
+@router.get("/tonight", response_class=HTMLResponse)
+def tonight_view(request: Request, db: DbSession, profile: Profile) -> HTMLResponse:
+    """
+    What to watch tonight: unwatched, in the base country, no VPN.
+
+    The actual product. Computed through the watch strategy rather than a SQL
+    filter, because best_option depends on fuzzy, bundle-aware provider
+    matching that SQL cannot reproduce.
+    """
+    picks = watch.tonight(db, profile=profile)
+    return render(
+        request,
+        "tonight.html",
+        {"picks": picks, "base_country": profile["base_country"]},
+    )
+
+
+@router.get("/stale", response_class=HTMLResponse)
+def stale_view(
+    request: Request,
+    db: DbSession,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(DEFAULT_PER_PAGE, ge=1, le=MAX_PER_PAGE),
+) -> HTMLResponse:
+    """
+    Films whose availability has aged past the TTL, worst first.
+
+    The refresh button triggers the same background job the grid does; it
+    refreshes every stale film, which is all of these.
+    """
+    films, total = library.list_stale(db, page=page, per_page=per_page)
+    pages = max(1, ceil(total / per_page))
+
+    return render(
+        request,
+        "stale.html",
+        {
+            "films": films,
+            "total": total,
+            "page": page,
+            "pages": pages,
+            "per_page": per_page,
+            "ttl_days": settings.CACHE_TTL_DAYS,
+            "latest_job": jobs.latest(db, kind="refresh"),
+        },
+    )
+
+
 @router.post(
     "/film/{film_id}/watched",
     response_class=HTMLResponse,
@@ -276,3 +328,99 @@ def job_status(request: Request, job_id: int, db: DbSession) -> HTMLResponse:
         raise HTTPException(status_code=404, detail="No such job.")
 
     return render(request, "partials/job.html", {"job": job})
+
+
+# ==============================================================================
+# Profile
+# ==============================================================================
+
+
+@router.get("/profile", response_class=HTMLResponse)
+def profile_form(request: Request) -> HTMLResponse:
+    """
+    The profile editor.
+
+    Reads config from disk, not the request-scoped `get_profile`: this edits
+    the raw stored shape (available_countries can be "all"), which the resolved
+    profile flattens.
+    """
+    return render(request, "profile.html", {"form": profile_service.load_form()})
+
+
+@router.get("/profile/subscription", response_class=HTMLResponse)
+def profile_add_subscription(request: Request) -> HTMLResponse:
+    """A blank subscription row, for the form's Add button. HTMX appends it."""
+    return render(
+        request,
+        "partials/subscription_row.html",
+        {"sub": profile_service.SubscriptionForm(), "token": _fresh_token()},
+    )
+
+
+@router.post(
+    "/profile",
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_user)],
+)
+async def save_profile(request: Request) -> Response:
+    """
+    Persist the profile.
+
+    Subscriptions are a variable-length list, so the form is read raw and
+    parsed by row token rather than declared as fixed parameters. The key field
+    is write-only: an empty submission leaves the stored key untouched, which
+    is why it is not simply overwritten.
+    """
+    data = await request.form()
+    form = _parse_profile_form(data)
+
+    profile_service.save_form(form, new_api_key=str(data.get("api_key") or ""))
+
+    # Redirect so a reload does not repost, and so the page re-reads the saved
+    # state (masked key included) rather than echoing the submission back.
+    return RedirectResponse(url="/profile?saved=1", status_code=303)
+
+
+def _fresh_token() -> str:
+    """A short unique token to namespace one subscription row's field names."""
+    return uuid4().hex[:8]
+
+
+def _parse_profile_form(data) -> profile_service.ProfileForm:
+    """
+    Turn the raw multipart form into a ProfileForm.
+
+    Rows are keyed `sub-<token>-<field>` so an unchecked checkbox - which
+    submits nothing - cannot slide a row's values onto the next row's, the way
+    parallel same-named lists would.
+    """
+    tokens = [
+        key[len("sub-") : -len("-provider_name")]
+        for key in data.keys()
+        if key.startswith("sub-") and key.endswith("-provider_name")
+    ]
+
+    subscriptions = [
+        profile_service.SubscriptionForm(
+            provider_name=str(data.get(f"sub-{token}-provider_name") or ""),
+            vpn_enabled=f"sub-{token}-vpn_enabled" in data,
+            countries=str(data.get(f"sub-{token}-countries") or ""),
+            bundles=str(data.get(f"sub-{token}-bundles") or ""),
+        )
+        for token in tokens
+    ]
+
+    # Clamp rather than validate-and-500: a browser number field can still
+    # submit an out-of-range or empty value, and this form has one user.
+    try:
+        max_vpn = int(data.get("max_vpn_suggestions") or 3)
+    except ValueError:
+        max_vpn = 3
+    max_vpn = max(0, min(20, max_vpn))
+
+    return profile_service.ProfileForm(
+        base_country=str(data.get("base_country") or "FR"),
+        max_vpn_suggestions=max_vpn,
+        vpn_priority=str(data.get("vpn_priority") or ""),
+        subscriptions=subscriptions,
+    )

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}Tonight · ScreenSeeker{% endblock %}
+
+{% block content %}
+<section class="tonight">
+  <h1>Tonight</h1>
+  <p class="tonight__lede">
+    Unwatched, streaming in {{ base_country }} on something you already pay for — no VPN.
+  </p>
+
+  {% if picks %}
+    <p class="count">{{ picks|length }} film{{ '' if picks|length == 1 else 's' }} ready to watch</p>
+
+    <div class="grid">
+      {% for pick in picks %}
+        {# The grid card, plus the one thing this view adds: what to watch it on. #}
+        {% with film = pick.film, tonight_option = pick.best_option %}
+          {% include "partials/card.html" %}
+        {% endwith %}
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="empty">
+      Nothing to watch tonight on your current subscriptions.
+      Either everything unwatched is unavailable in {{ base_country }}, or your
+      <a href="/profile">profile</a> has no subscriptions yet. A
+      <a href="/stale">refresh</a> may also be overdue.
+    </p>
+  {% endif %}
+</section>
+{% endblock %}

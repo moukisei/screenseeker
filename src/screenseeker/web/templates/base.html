@@ -20,7 +20,14 @@
 <body>
   <header class="topbar">
     <a class="brand" href="/">ScreenSeeker</a>
-    <p class="tagline">What can I watch tonight, on what I already pay for.</p>
+    {# Active tab is derived from the path, so no route has to pass it in. #}
+    {% set path = request.url.path %}
+    <nav class="nav">
+      <a href="/tonight"{% if path == '/tonight' %} class="nav--active"{% endif %}>Tonight</a>
+      <a href="/"{% if path == '/' %} class="nav--active"{% endif %}>Library</a>
+      <a href="/stale"{% if path == '/stale' %} class="nav--active"{% endif %}>Stale</a>
+      <a href="/profile"{% if path == '/profile' %} class="nav--active"{% endif %}>Profile</a>
+    </nav>
   </header>
 
   <main>

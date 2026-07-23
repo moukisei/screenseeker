@@ -22,6 +22,17 @@
     </p>
 
     {#
+      Tonight passes the best option; the grid does not. It is the whole reason
+      a film is in the Tonight list, so it leads rather than sits with the
+      generic offer count below.
+    #}
+    {% if tonight_option %}
+      <p class="badge badge--yes badge--best" title="Watch tonight, no VPN">
+        ▶ {{ tonight_option.provider }}
+      </p>
+    {% endif %}
+
+    {#
       Availability, as far as a grid row can know it cheaply. Which of those
       offers is on a subscription the user holds needs the offer rows joined
       against the profile - that is the Step 6 filter query, not a per-card

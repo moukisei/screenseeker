@@ -10,16 +10,17 @@ Every function serialises to FilmSummary or FilmDetail while the session is
 open, so callers never receive a detached ORM instance.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import case, distinct, func, or_, select
 from sqlalchemy.orm import Session
 
+from .. import settings
 from ..database.models import Film, StreamingOffer
 from ..logger import get_logger
-from .models import FilmDetail, FilmSummary
+from .models import FilmDetail, FilmSummary, OfferOut
 
 logger = get_logger(__name__)
 
@@ -285,6 +286,56 @@ def get_detail(
     total_offers = offer_counts(session, [film_id]).get(film_id, 0)
 
     return FilmDetail.from_film(film, offers=query.all(), offer_count=total_offers)
+
+
+def offers_for_films(
+    session: Session, film_ids: list[int], *, countries: Optional[list[str]] = None
+) -> dict[int, list[OfferOut]]:
+    """
+    Load offers for many films in one query, grouped by film.
+
+    The Tonight view needs each candidate's offers to run the watch strategy;
+    calling get_detail per film would be one query each. `countries` scopes
+    the rows the same way get_detail does.
+    """
+    if not film_ids:
+        return {}
+
+    query = session.query(StreamingOffer).filter(StreamingOffer.film_id.in_(film_ids))
+    if countries:
+        query = query.filter(StreamingOffer.country_code.in_([c.upper() for c in countries]))
+
+    grouped: dict[int, list[OfferOut]] = {fid: [] for fid in film_ids}
+    for row in query.all():
+        grouped[row.film_id].append(OfferOut.from_row(row))
+    return grouped
+
+
+def list_stale(
+    session: Session, *, days: int = settings.CACHE_TTL_DAYS, page: int = 1, per_page: int = 48
+) -> tuple[list[FilmSummary], int]:
+    """
+    Films whose streaming data has aged past the TTL, oldest first.
+
+    A never-checked film is stale, not fresh, so it sorts before everything
+    with a date. Ordered so the refresh queue reads worst-first.
+    """
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    stale = or_(Film.last_checked.is_(None), Film.last_checked < cutoff)
+
+    total = session.query(func.count(Film.id)).filter(stale).scalar() or 0
+
+    films = (
+        session.query(Film)
+        .filter(stale)
+        # NULLs first: never-checked is the most stale. Then oldest check.
+        .order_by(Film.last_checked.is_(None).desc(), Film.last_checked.asc(), Film.id.asc())
+        .limit(per_page)
+        .offset((page - 1) * per_page)
+        .all()
+    )
+
+    return _summarise(session, films), total
 
 
 def set_watched_by_id(

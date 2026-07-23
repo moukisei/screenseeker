@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block title %}Profile · ScreenSeeker{% endblock %}
+
+{% block content %}
+<section class="profile">
+  <h1>Profile</h1>
+  <p class="tonight__lede">
+    Your subscriptions and preferences. Everything here feeds the watch
+    strategy — Tonight and every film's best option are computed from it.
+  </p>
+
+  {% if request.query_params.get('saved') %}
+    <p class="flash">Saved.</p>
+  {% endif %}
+
+  <form class="profile-form" method="post" action="/profile">
+
+    <div class="profile-grid">
+      <label>
+        Base country
+        <input type="text" name="base_country" value="{{ form.base_country }}"
+               maxlength="2" size="4" required>
+        <span class="hint">Where you watch from, no VPN. Two-letter code.</span>
+      </label>
+
+      <label>
+        Max VPN suggestions
+        <input type="number" name="max_vpn_suggestions"
+               value="{{ form.max_vpn_suggestions }}" min="0" max="20">
+        <span class="hint">How many VPN options a film's page will list.</span>
+      </label>
+    </div>
+
+    <label class="profile-block">
+      VPN priority
+      <textarea name="vpn_priority" rows="6">{{ form.vpn_priority }}</textarea>
+      <span class="hint">One country code per line. Order is preference — first is best.</span>
+    </label>
+
+    <fieldset class="profile-key">
+      <legend>TMDB API key</legend>
+      {% if form.key_is_locked %}
+        <p class="hint">Supplied by the environment. It cannot be changed here.</p>
+        <input type="password" disabled placeholder="set via environment">
+      {% else %}
+        <input type="password" name="api_key" autocomplete="off"
+               placeholder="{{ 'leave blank to keep the current key' if form.key_source == 'file' else 'paste your TMDB key' }}">
+        <span class="hint">
+          Write-only. {{ 'A key is set; leave blank to keep it.' if form.key_source == 'file'
+            else 'No key set yet.' }}
+        </span>
+      {% endif %}
+    </fieldset>
+
+    <div class="profile-subs">
+      <div class="profile-subs__head">
+        <h2>Subscriptions</h2>
+        {# Appends a fresh blank row; the server assigns each a unique token. #}
+        <button type="button"
+                hx-get="/profile/subscription"
+                hx-target="#sub-list"
+                hx-swap="beforeend">Add subscription</button>
+      </div>
+
+      <div id="sub-list">
+        {% for sub in form.subscriptions %}
+          {% with token = loop.index0 ~ '-' ~ range(100000, 999999)|random %}
+            {% include "partials/subscription_row.html" %}
+          {% endwith %}
+        {% endfor %}
+      </div>
+
+      {% if not form.subscriptions %}
+        <p class="hint" id="no-subs">No subscriptions yet. Add one, or Tonight stays empty.</p>
+      {% endif %}
+    </div>
+
+    <button type="submit" class="profile-save">Save profile</button>
+  </form>
+</section>
+{% endblock %}

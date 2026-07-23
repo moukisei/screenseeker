@@ -9,13 +9,13 @@ This is the only service layer. database/ holds the models, the engine and the
 session factory, and nothing else.
 """
 
-from . import enrichment, jobs, library, sync, watch
+from . import enrichment, jobs, library, profile, sync, watch
 from .enrichment import EnrichmentReport, FilmError, enrich_films
 from .jobs import JobOut
 from .library import Facets, LibraryFilter, list_films
 from .models import FilmDetail, FilmSummary, OfferOut, logo_url, poster_url
 from .sync import SyncReport, ingest_watchlist
-from .watch import find_watch_options, reachable_countries, watch_strategy_for
+from .watch import TonightPick, find_watch_options, reachable_countries, tonight, watch_strategy_for
 
 __all__ = [
     "EnrichmentReport",
@@ -27,6 +27,7 @@ __all__ = [
     "LibraryFilter",
     "OfferOut",
     "SyncReport",
+    "TonightPick",
     "enrich_films",
     "enrichment",
     "find_watch_options",
@@ -36,8 +37,10 @@ __all__ = [
     "list_films",
     "logo_url",
     "poster_url",
+    "profile",
     "reachable_countries",
     "sync",
+    "tonight",
     "watch",
     "watch_strategy_for",
 ]
