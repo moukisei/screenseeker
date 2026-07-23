@@ -14,6 +14,8 @@ from fastapi import Request
 from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse
 
+from . import auth
+
 PACKAGE_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = PACKAGE_DIR / "templates"
 STATIC_DIR = PACKAGE_DIR / "static"
@@ -39,6 +41,10 @@ def _days(value: Optional[int]) -> str:
 
 templates.env.filters["rating"] = _rating
 templates.env.filters["days"] = _days
+
+# Read at render time, not import: tests toggle the password via monkeypatch.
+# The template uses it only to decide whether to show a Sign out control.
+templates.env.globals["auth_enabled"] = auth.is_enabled
 
 
 def is_htmx(request: Request) -> bool:

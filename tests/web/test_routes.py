@@ -192,9 +192,12 @@ class TestAppConfiguration:
         app = create_app()
         unguarded = []
 
+        # POST /login cannot require a logged-in user - it is how you log in.
+        exempt = {"/login"}
+
         for route in app.routes:
             methods = getattr(route, "methods", set()) - {"GET", "HEAD", "OPTIONS"}
-            if not methods:
+            if not methods or route.path in exempt:
                 continue
             deps = [d.call for d in getattr(route, "dependant", None).dependencies]
             if require_user not in deps:

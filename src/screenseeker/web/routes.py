@@ -26,6 +26,7 @@ from ..services import profile as profile_service
 from ..services import watch
 from ..services.models import FilmDetail, OfferOut
 from ..services.watch import find_watch_options
+from . import auth
 from .deps import get_db, get_profile, require_user
 from .rendering import is_htmx, render
 
@@ -379,6 +380,67 @@ async def save_profile(request: Request) -> Response:
     # Redirect so a reload does not repost, and so the page re-reads the saved
     # state (masked key included) rather than echoing the submission back.
     return RedirectResponse(url="/profile?saved=1", status_code=303)
+
+
+# ==============================================================================
+# Authentication
+#
+# These routes exist whether or not a password is set; when none is, the login
+# page just reports that the app is open and every redirect lands back on it.
+# The middleware in app.py is what actually enforces the session - see auth.py.
+# ==============================================================================
+
+
+@router.get("/login", response_class=HTMLResponse)
+def login_form(request: Request, next: str = "/") -> Response:
+    """The login page. Redirects straight in if auth is off or already valid."""
+    if not auth.is_enabled() or auth.request_is_authenticated(request):
+        return RedirectResponse(url=auth.safe_next(next), status_code=303)
+
+    return render(request, "login.html", {"next": auth.safe_next(next), "error": False})
+
+
+@router.post("/login", response_class=HTMLResponse)
+def login(
+    request: Request,
+    password: str = Form(...),
+    next: str = Form("/"),
+) -> Response:
+    """
+    Check the password and, on success, set the session cookie.
+
+    Not behind require_user: you cannot be asked to be logged in to log in.
+    SameSite=Lax on the cookie it sets is what defends the session afterwards.
+    """
+    if not auth.is_enabled():
+        return RedirectResponse(url="/", status_code=303)
+
+    if not auth.password_matches(password):
+        # Same response whether the password was wrong or empty; nothing here
+        # distinguishes them for a guesser.
+        return render(
+            request,
+            "login.html",
+            {"next": auth.safe_next(next), "error": True},
+            status_code=401,
+        )
+
+    response = RedirectResponse(url=auth.safe_next(next), status_code=303)
+    response.set_cookie(
+        auth.COOKIE_NAME,
+        auth.issue_token(),
+        max_age=settings.SESSION_MAX_AGE_DAYS * 86400,
+        **auth.cookie_params(),
+    )
+    return response
+
+
+@router.post("/logout", response_class=HTMLResponse, dependencies=[Depends(require_user)])
+def logout() -> Response:
+    """Clear the session cookie. Harmless when not logged in."""
+    response = RedirectResponse(url="/login", status_code=303)
+    response.delete_cookie(auth.COOKIE_NAME, path="/")
+    return response
 
 
 def _fresh_token() -> str:

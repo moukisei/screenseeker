@@ -1,0 +1,28 @@
+# Caddy reverse proxy for ScreenSeeker.
+#
+# Caddy is the whole TLS story: it obtains and renews a Let's Encrypt
+# certificate on its own, terminates HTTPS, and forwards plain http to the app
+# on loopback. The app never faces the internet directly.
+#
+#   sudo cp deploy/Caddyfile /etc/caddy/Caddyfile   # edit the domain first
+#   sudo systemctl reload caddy
+#
+# Replace screenseeker.example.com with your domain, pointed at this host.
+
+screenseeker.example.com {
+	# Forwards to the loopback bind in screenseeker.service. Caddy sets
+	# X-Forwarded-Proto=https, which uvicorn --proxy-headers trusts, so the app
+	# marks the session cookie Secure correctly.
+	reverse_proxy 127.0.0.1:8000
+
+	encode gzip
+
+	# The app sets its own cookie flags; these harden everything else.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+}

@@ -1,17 +1,20 @@
 """
 Request-scoped dependencies.
 
-`require_user` is the auth seam: a no-op today, the one function that changes
-when the app leaves localhost.
+`require_user` is the auth seam: a no-op when no password is set, the CSRF
+origin check on every mutation when one is.
 """
 
 from typing import Iterator
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
+from starlette.requests import Request
 
 from .. import user_config
 from ..database import session as db_session
 from ..logger import get_logger
+from . import auth
 
 logger = get_logger(__name__)
 
@@ -38,13 +41,24 @@ def get_db() -> Iterator[Session]:
         session.close()
 
 
-async def require_user() -> None:
+async def require_user(request: Request) -> None:
     """
-    No-op today. Later this validates a session cookie and raises 401.
+    The mutation half of the auth seam.
 
-    Every mutating route already depends on it, so adding authentication is a
-    change to this function rather than to each route.
+    Authentication is enforced globally by the middleware; this dependency,
+    declared by every mutating route, adds the CSRF origin check to exactly
+    those routes. When no password is set it is the no-op it always was.
+
+    Kept as a per-route dependency rather than folded into the middleware so
+    that "every mutation declares require_user" stays a checkable invariant -
+    a POST that forgets it is a POST the origin check does not cover.
     """
+    if not auth.is_enabled():
+        return None
+
+    if not auth.origin_is_trusted(request):
+        raise HTTPException(status_code=403, detail="Cross-origin request rejected.")
+
     return None
 
 

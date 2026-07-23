@@ -94,6 +94,27 @@ HOST = os.getenv("SCREENSEEKER_HOST", "127.0.0.1")
 PORT = int(os.getenv("SCREENSEEKER_PORT", "8000"))
 DEBUG = _env_flag("SCREENSEEKER_DEBUG", False)
 
+# --- Authentication ----------------------------------------------------------
+
+# The one lever. Empty means no authentication - the app is open, as it is on
+# localhost and behind a tailnet. Set it and every page requires a login; unset
+# it and require_user is a no-op. Nothing else in the auth path turns on until
+# this is non-empty.
+PASSWORD = os.getenv("SCREENSEEKER_PASSWORD", "")
+
+# Signs the session cookie. When unset it is derived from the password, so one
+# secret is enough to run and rotating the password logs every session out.
+# Set it explicitly to survive a password change without logging out.
+SECRET_KEY = os.getenv("SCREENSEEKER_SECRET_KEY", "")
+
+# Whether the session cookie carries the Secure flag. True is correct behind
+# TLS. Set it false only to test auth over plain http on localhost - with it on,
+# the browser will not send the cookie back over http and login appears to loop.
+COOKIE_SECURE = _env_flag("SCREENSEEKER_COOKIE_SECURE", True)
+
+# How long a login lasts.
+SESSION_MAX_AGE_DAYS = int(os.getenv("SCREENSEEKER_SESSION_MAX_AGE_DAYS", "14"))
+
 # --- Scraping ----------------------------------------------------------------
 
 HTML_DELAY_BETWEEN_REQUESTS = float(os.getenv("HTML_DELAY_BETWEEN_REQUESTS", "2.0"))

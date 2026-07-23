@@ -40,6 +40,19 @@ code { background: var(--panel); padding: 0 .3em; border-radius: 4px; font-size:
 .nav a { text-decoration: none; color: var(--muted); font-size: .9rem; padding-bottom: 2px; border-bottom: 2px solid transparent; }
 .nav a:hover { color: var(--text); }
 .nav .nav--active { color: var(--text); border-bottom-color: var(--accent); }
+.nav__logout { margin: 0; }
+.nav__logout button { background: none; border: none; color: var(--muted); font: inherit; font-size: .9rem; cursor: pointer; padding: 0; }
+.nav__logout button:hover { color: var(--text); }
+
+/* --- Login -------------------------------------------------------------- */
+
+.login { max-width: 360px; margin: 12vh auto 0; padding: 0 1.5rem; text-align: center; }
+.login .brand { margin: 0; font-size: 1.6rem; }
+.login .tagline { margin: .35rem 0 2rem; }
+.login-form { display: flex; flex-direction: column; gap: 1rem; text-align: left; }
+.login-form label { display: flex; flex-direction: column; gap: .35rem; font-weight: 600; }
+.login-form button { padding: .55rem; font-weight: 600; }
+.login-error { color: #f87171; margin: 0; font-size: .875rem; }
 
 .tonight__lede { color: var(--muted); margin: .25rem 0 1.25rem; }
 .badge--best { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); font-weight: 600; }

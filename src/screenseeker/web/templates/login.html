@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · ScreenSeeker</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/app.css') }}">
+</head>
+<body>
+  {#
+    Deliberately not extending base.html: the nav there links to pages a
+    logged-out visitor cannot reach, and this page needs no session of its own.
+  #}
+  <main class="login">
+    <h1 class="brand">ScreenSeeker</h1>
+    <p class="tagline">What can I watch tonight, on what I already pay for.</p>
+
+    <form class="login-form" method="post" action="/login">
+      {# Carried through so a session that expired mid-navigation lands back
+         where it was, not on the home page. safe_next has already checked it. #}
+      <input type="hidden" name="next" value="{{ next }}">
+
+      <label>
+        Password
+        <input type="password" name="password" autocomplete="current-password"
+               autofocus required>
+      </label>
+
+      {% if error %}
+        <p class="login-error">That password is not right.</p>
+      {% endif %}
+
+      <button type="submit">Sign in</button>
+    </form>
+  </main>
+</body>
+</html>
