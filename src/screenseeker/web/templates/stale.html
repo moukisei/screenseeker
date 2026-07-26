@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}Stale · ScreenSeeker{% endblock %}
+
+{% block content %}
+<section class="stale">
+  <h1>Stale</h1>
+  <p class="tonight__lede">
+    Availability older than {{ ttl_days }} days, or never checked. Refreshing
+    covers every film here.
+  </p>
+
+  <div class="jobs">
+    <div class="jobs__actions">
+      {# The same background job the library uses; it selects exactly these films. #}
+      <form method="post" action="/jobs/refresh"
+            hx-post="/jobs/refresh" hx-target="#job-panel" hx-swap="outerHTML">
+        <button type="submit">Refresh all stale</button>
+      </form>
+    </div>
+
+    {% if latest_job %}
+      {% with job = latest_job %}{% include "partials/job.html" %}{% endwith %}
+    {% else %}
+      <div id="job-panel" class="job job--idle"></div>
+    {% endif %}
+  </div>
+
+  {% if films %}
+    <p class="count">
+      {{ total }} stale film{{ '' if total == 1 else 's' }}
+      {%- if pages > 1 %} · page {{ page }} of {{ pages }}{% endif %}
+    </p>
+
+    <div class="grid">
+      {% for film in films %}
+        {% include "partials/card.html" %}
+      {% endfor %}
+    </div>
+
+    {% if pages > 1 %}
+      <nav class="pager" aria-label="Pagination">
+        {% if page > 1 %}
+          <a href="/stale?page={{ page - 1 }}&per_page={{ per_page }}">← Previous</a>
+        {% else %}
+          <span class="disabled">← Previous</span>
+        {% endif %}
+        <span class="pager__position">{{ page }} / {{ pages }}</span>
+        {% if page < pages %}
+          <a href="/stale?page={{ page + 1 }}&per_page={{ per_page }}">Next →</a>
+        {% else %}
+          <span class="disabled">Next →</span>
+        {% endif %}
+      </nav>
+    {% endif %}
+  {% else %}
+    <p class="empty">Nothing is stale. Everything was checked within {{ ttl_days }} days.</p>
+  {% endif %}
+</section>
+{% endblock %}

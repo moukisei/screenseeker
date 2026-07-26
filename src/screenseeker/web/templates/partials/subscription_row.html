@@ -1,0 +1,37 @@
+{#
+  One subscription. Field names are namespaced by `token` so the server can
+  reassemble rows even when a checkbox submits nothing - parallel same-named
+  lists would slide values onto the wrong row.
+
+  Also returned on its own by GET /profile/subscription, so it must render from
+  `sub` and `token` alone.
+#}
+<fieldset class="sub-row">
+  <label class="sub-row__provider">
+    Provider
+    <input type="text" name="sub-{{ token }}-provider_name"
+           value="{{ sub.provider_name }}" placeholder="Netflix">
+  </label>
+
+  <label class="sub-row__vpn">
+    <input type="checkbox" name="sub-{{ token }}-vpn_enabled"
+           {% if sub.vpn_enabled %}checked{% endif %}>
+    VPN
+  </label>
+
+  <label class="sub-row__countries">
+    Countries
+    <input type="text" name="sub-{{ token }}-countries"
+           value="{{ sub.countries }}" placeholder="all, or FR, US">
+  </label>
+
+  <label class="sub-row__bundles">
+    Bundles
+    <input type="text" name="sub-{{ token }}-bundles"
+           value="{{ sub.bundles }}" placeholder="HBO Max, Paramount+">
+  </label>
+
+  {# Removes the row before submit. One DOM call, not a framework. #}
+  <button type="button" class="sub-row__remove"
+          onclick="this.closest('.sub-row').remove()">Remove</button>
+</fieldset>

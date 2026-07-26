@@ -9,11 +9,13 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
     String,
     Text,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, relationship
 
@@ -48,6 +50,12 @@ class Film(Base):
     tmdb_release_date: Mapped[Optional[str]] = Column(
         String, nullable=True
     )  # Full date: YYYY-MM-DD
+
+    # TMDB presentation data (needed by the web UI, unused by the CLI)
+    poster_path: Mapped[Optional[str]] = Column(String, nullable=True)  # TMDB path, not a full URL
+    overview: Mapped[Optional[str]] = Column(Text, nullable=True)
+    vote_average: Mapped[Optional[float]] = Column(Float, nullable=True)
+    runtime: Mapped[Optional[int]] = Column(Integer, nullable=True)  # Minutes; null until enriched
 
     # Match metadata
     match_confidence: Mapped[Optional[str]] = Column(
@@ -151,6 +159,48 @@ class StreamingOffer(Base):
         )
 
 
+class Job(Base):
+    """
+    One background run of sync or refresh.
+
+    Both take minutes, so they cannot be a request. The row is the only thing
+    the web layer and the worker share: the worker writes progress, the poll
+    endpoint reads it.
+    """
+
+    __tablename__ = "jobs"
+
+    id: Mapped[int] = Column(Integer, primary_key=True, autoincrement=True)
+
+    kind: Mapped[str] = Column(String, nullable=False)  # sync | refresh
+    status: Mapped[str] = Column(String, nullable=False)  # queued/running/succeeded/failed
+
+    progress_current: Mapped[int] = Column(Integer, nullable=False, default=0)
+    progress_total: Mapped[int] = Column(Integer, nullable=False, default=0)
+
+    # What the job is doing right now, then what it did. Safe to show.
+    message: Mapped[Optional[str]] = Column(Text, nullable=True)
+    # Populated whenever anything went wrong, including a run that otherwise
+    # succeeded with some films failing - a failure that is not recorded here
+    # vanishes, which is the thing this table exists to prevent.
+    error: Mapped[Optional[str]] = Column(Text, nullable=True)
+
+    # A queued job has no started_at, so ordering by it would put new jobs
+    # last. created_at is what "most recent job" means.
+    created_at: Mapped[datetime] = Column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    started_at: Mapped[Optional[datetime]] = Column(DateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = Column(DateTime, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<Job(id={self.id}, kind='{self.kind}', status='{self.status}')>"
+
+
+# A job in one of these statuses owns its kind.
+ACTIVE_JOB_STATUSES = ("queued", "running")
+
+
 # Indexes for common query patterns
 Index(
     "idx_offers_country_provider",
@@ -159,3 +209,16 @@ Index(
 )
 Index("idx_offers_checked_at", StreamingOffer.checked_at)
 Index("idx_films_title_year", Film.letterboxd_title, Film.letterboxd_year)
+
+# The single-flight guard, as a constraint rather than an application check.
+# Two requests can both read "nothing is running" before either inserts, and
+# two concurrent syncs race get_or_create_film into duplicate films. The
+# service still checks first so the user gets a sentence instead of an
+# IntegrityError, but this is what makes the guarantee true.
+Index(
+    "idx_jobs_one_active_per_kind",
+    Job.kind,
+    unique=True,
+    sqlite_where=text(f"status IN ({', '.join(repr(s) for s in ACTIVE_JOB_STATUSES)})"),
+)
+Index("idx_jobs_created_at", Job.created_at)

@@ -1,18 +1,28 @@
-import os
-from pathlib import Path
+"""
+Backwards-compatible aliases for the low-level tunables.
 
-# Output Configuration
-OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "./output"))
-SAVE_RAW_DATA = os.getenv("SAVE_RAW_DATA", "True").lower() == "true"
+The values now live in settings.py, which resolves them from the environment
+in one place. This module stays so existing imports keep working.
+"""
 
-# HTML Scraper Settings
-HTML_DELAY_BETWEEN_REQUESTS = float(os.getenv("HTML_DELAY_BETWEEN_REQUESTS", "2.0"))
-HTML_TIMEOUT = int(os.getenv("HTML_TIMEOUT", "10"))
+from .settings import (
+    HTML_DELAY_BETWEEN_REQUESTS,
+    HTML_TIMEOUT,
+    LOG_LEVEL,
+    LOG_TO_FILE,
+    OUTPUT_DIR,
+    SAVE_RAW_DATA,
+)
 
-# Logging Configuration
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-LOG_TO_FILE = os.getenv("LOG_TO_FILE", "False").lower() == "true"
+__all__ = [
+    "HTML_DELAY_BETWEEN_REQUESTS",
+    "HTML_TIMEOUT",
+    "LOG_LEVEL",
+    "LOG_TO_FILE",
+    "OUTPUT_DIR",
+    "SAVE_RAW_DATA",
+]
 
 # All user settings (Letterboxd username, TMDB credentials, subscriptions)
-# are stored in ~/.config/screenseeker/config.toml.
+# are stored in the config file at settings.CONFIG_PATH.
 # Run `screenseeker config init` to set them up.

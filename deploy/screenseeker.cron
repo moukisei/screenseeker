@@ -1,0 +1,17 @@
+# ScreenSeeker scheduled jobs.
+#
+#   sudo cp deploy/screenseeker.cron /etc/cron.d/screenseeker
+#
+# /etc/cron.d entries carry a user field (here: screenseeker). Adjust paths to
+# your install. Both lines source the env file so SCREENSEEKER_DB_PATH and the
+# TMDB key match the running service.
+
+SHELL=/bin/bash
+
+# Keep the mirror fresh: refresh availability for every stale film, nightly at
+# 04:00. --yes skips the confirmation prompt. This is the same work the web
+# Refresh button does; running it here means the data is fresh before you look.
+0 4 * * * screenseeker set -a; . /etc/screenseeker.env; /opt/screenseeker/.venv/bin/screenseeker refresh --yes >> /var/log/screenseeker-refresh.log 2>&1
+
+# Snapshot the database every day at 03:30, before the refresh writes to it.
+30 3 * * * screenseeker set -a; . /etc/screenseeker.env; /opt/screenseeker/deploy/backup.sh >> /var/log/screenseeker-backup.log 2>&1

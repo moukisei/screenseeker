@@ -1,18 +1,20 @@
 """
 User configuration management.
 
-Reads and writes ~/.config/screenseeker/config.toml.
+Reads and writes the config file at settings.CONFIG_PATH, which defaults to
+~/.config/screenseeker/config.toml and is overridable with
+SCREENSEEKER_CONFIG_PATH.
 """
 
 import tomllib
-from pathlib import Path
 
 import tomli_w
 
+from . import settings
 from .exceptions import ConfigurationError
 
-CONFIG_DIR = Path.home() / ".config" / "screenseeker"
-CONFIG_PATH = CONFIG_DIR / "config.toml"
+CONFIG_PATH = settings.CONFIG_PATH
+CONFIG_DIR = CONFIG_PATH.parent
 
 # Default VPN country priority (English-speaking first, then European, then other)
 DEFAULT_VPN_PRIORITY = [
@@ -87,6 +89,16 @@ def save_config(cfg: dict) -> None:
 def get_letterboxd_username(cfg: dict) -> str:
     """Return the configured Letterboxd username."""
     return cfg.get("letterboxd", {}).get("username", "")
+
+
+def get_tmdb_api_key(cfg: dict) -> str:
+    """
+    Return the TMDB API key.
+
+    TMDB_API_KEY in the environment wins over the config file, so a deployment
+    can supply the key as a secret instead of writing it to disk.
+    """
+    return settings.TMDB_API_KEY_ENV or cfg.get("tmdb", {}).get("api_key", "")
 
 
 def get_subscription_profile(cfg: dict) -> dict:

@@ -34,15 +34,18 @@ class TMDBMovieInfo(BaseModel):
 
     tmdb_id: int = Field(..., description="TMDB movie ID")
     title: str = Field(..., description="Movie title")
-    original_title: str = Field(..., description="Original movie title")
+    # Optional because this model is also rebuilt from the database, which does
+    # not persist either field. Nothing reads them outside of TMDB parsing.
+    original_title: Optional[str] = Field(None, description="Original movie title")
     release_date: Optional[str] = Field(None, description="Release date (YYYY-MM-DD)")
     year: Optional[int] = Field(None, description="Release year")
     overview: Optional[str] = Field(None, description="Movie overview/description")
-    original_language: str = Field(..., description="ISO 639-1 language code")
+    original_language: Optional[str] = Field(None, description="ISO 639-1 language code")
     poster_path: Optional[str] = Field(None, description="TMDB poster path")
     backdrop_path: Optional[str] = Field(None, description="TMDB backdrop path")
     vote_average: Optional[float] = Field(None, description="TMDB vote average")
     popularity: Optional[float] = Field(None, description="TMDB popularity score")
+    runtime: Optional[int] = Field(None, description="Runtime in minutes")
 
 
 class EnrichmentResult(BaseModel):

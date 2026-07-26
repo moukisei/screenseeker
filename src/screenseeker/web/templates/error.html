@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+
+{% block title %}{{ status_code }} · ScreenSeeker{% endblock %}
+
+{% block content %}
+<div class="error">
+  <h1>{{ status_code }}</h1>
+  <p>{{ detail }}</p>
+  <p><a href="/">← Library</a></p>
+</div>
+{% endblock %}

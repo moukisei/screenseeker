@@ -145,6 +145,52 @@ class TestTMDBEnricher:
         assert movie_info.year == 1999
         assert movie_info.vote_average == 8.7
 
+    def test_tmdb_enricher_parse_tmdb_movie_reads_runtime(self):
+        """Runtime rides in on the details endpoint, absent from search."""
+        enricher = TMDBEnricher(api_key="test_key")
+
+        with_runtime = enricher._parse_tmdb_movie({"id": 603, "title": "X", "runtime": 136})
+        assert with_runtime.runtime == 136
+
+        # A search result carries no runtime; the field stays None.
+        from_search = enricher._parse_tmdb_movie({"id": 603, "title": "X"})
+        assert from_search.runtime is None
+
+    def test_tmdb_enricher_enrich_folds_runtime_and_providers_into_one_call(self, monkeypatch):
+        """
+        enrich() takes runtime and providers from a single details request
+        (append_to_response), not a separate providers call.
+        """
+        enricher = TMDBEnricher(api_key="test_key")
+        calls = []
+
+        def fake_request(endpoint, params=None):
+            calls.append((endpoint, params))
+            if endpoint == "/search/movie":
+                return {
+                    "results": [{"id": 603, "title": "The Matrix", "release_date": "1999-03-31"}]
+                }
+            if endpoint == "/movie/603":
+                return {
+                    "id": 603,
+                    "title": "The Matrix",
+                    "release_date": "1999-03-31",
+                    "runtime": 136,
+                    "watch/providers": {"results": {}},
+                }
+            raise AssertionError(f"unexpected endpoint {endpoint}")
+
+        monkeypatch.setattr(enricher, "_make_request", fake_request)
+
+        result = enricher.enrich("The Matrix", 1999, fuzzy_year=False)
+
+        assert result.success
+        assert result.tmdb_movie.runtime == 136
+        # The details call asks for providers to be appended - no separate fetch.
+        detail_call = next(c for c in calls if c[0] == "/movie/603")
+        assert detail_call[1] == {"append_to_response": "watch/providers"}
+        assert not any(c[0].endswith("/watch/providers") for c in calls)
+
     def test_tmdb_enricher_parse_tmdb_movie_no_release_date(self):
         """Test parsing TMDB movie data without release date."""
         enricher = TMDBEnricher(api_key="test_key")
@@ -165,6 +211,7 @@ class TestTMDBEnricher:
         enricher = TMDBEnricher(api_key="test_key")
         providers_data = {
             "US": {
+                "link": "https://www.themoviedb.org/movie/603/watch?locale=US",
                 "flatrate": [
                     {
                         "provider_id": 8,
@@ -200,6 +247,13 @@ class TestTMDBEnricher:
         assert any(o.provider_name == "Netflix" and o.country_code == "US" for o in offers)
         assert any(o.provider_name == "Canal+" and o.country_code == "FR" for o in offers)
         assert any(o.offer_type == "rent" for o in offers)
+
+        # The country link rides along on every offer in that country, and a
+        # country without one leaves it null rather than borrowing another's.
+        us = next(o for o in offers if o.country_code == "US")
+        fr = next(o for o in offers if o.country_code == "FR")
+        assert us.streaming_url == "https://www.themoviedb.org/movie/603/watch?locale=US"
+        assert fr.streaming_url is None
 
     def test_tmdb_enricher_parse_streaming_offers_empty(self):
         """Test parsing empty streaming offers."""

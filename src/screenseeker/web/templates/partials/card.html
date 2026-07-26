@@ -1,0 +1,85 @@
+{#
+  One film in the grid. Also returned on its own by POST /film/{id}/watched,
+  so it must render standalone from `film` alone and carry the id that the
+  toggle swaps.
+#}
+<article class="card{% if film.watched %} card--watched{% endif %}" id="film-card-{{ film.id }}">
+
+  <a class="card__poster" href="/film/{{ film.id }}">
+    {% if film.poster %}
+      <img src="{{ film.poster }}" alt="" loading="lazy" width="342" height="513">
+    {% else %}
+      <span class="card__noposter">{{ film.title }}</span>
+    {% endif %}
+  </a>
+
+  <div class="card__body">
+    <h2 class="card__title"><a href="/film/{{ film.id }}">{{ film.title }}</a></h2>
+
+    <p class="card__meta">
+      {{ film.year or '—' }}
+      {%- if film.vote_average %} · ★ {{ film.vote_average|rating }}{% endif %}
+      {%- if film.runtime %} · {{ film.runtime|runtime }}{% endif %}
+    </p>
+
+    {#
+      One row for both pills, so a card with a ▶ mark is no taller than one
+      without: the flex row holds its height whether or not the mark is there.
+
+      `mark` is the best base-country, no-VPN option for this film, when it has
+      one. It links straight to the provider so the card is one click from
+      playing. The grid and Tonight both pass it; the stale view and the
+      watched-toggle fragment do not, and the block simply vanishes.
+
+      The availability pill is what a grid row can know cheaply. Which of those
+      offers is on a subscription the user holds needs the offer rows joined
+      against the profile - that is the Step 6 filter query, not a per-card
+      lookup.
+    #}
+    <div class="card__badges">
+      {% if mark %}
+        {% if mark.url %}
+          <a class="badge badge--best" href="{{ mark.url }}" target="_blank"
+             rel="noopener noreferrer" title="Watch now in your base country, no VPN">
+            ▶ {{ mark.provider }}
+          </a>
+        {% else %}
+          <span class="badge badge--best" title="On a subscription you hold, no VPN">
+            ▶ {{ mark.provider }}
+          </span>
+        {% endif %}
+      {% endif %}
+
+      {% if film.last_checked is none %}
+        <span class="badge badge--unknown" title="Run screenseeker refresh">Not checked</span>
+      {% elif film.offer_count == 0 %}
+        <span class="badge badge--none" title="{{ film.cache_age_days|days }}">Nowhere to stream</span>
+      {% else %}
+        <span class="badge badge--yes{% if film.is_stale %} badge--stale{% endif %}"
+              title="{{ film.cache_age_days|days }}">
+          {{ film.offer_count }} offer{{ '' if film.offer_count == 1 else 's' }}
+          {%- if film.is_stale %} · stale{% endif %}
+        </span>
+      {% endif %}
+    </div>
+
+    {% if film.watched and film.watched_at %}
+      <p class="card__seen">✓ watched {{ film.watched_at|ago }}</p>
+    {% endif %}
+
+    {#
+      POST, never GET. The desired state travels in the body so a resubmit is
+      idempotent, and the fragment that comes back carries the flipped value.
+    #}
+    <form class="toggle" method="post" action="/film/{{ film.id }}/watched"
+          hx-post="/film/{{ film.id }}/watched"
+          hx-target="#film-card-{{ film.id }}"
+          hx-swap="outerHTML">
+      <input type="hidden" name="watched" value="{{ 'false' if film.watched else 'true' }}">
+      <button type="submit" class="toggle__button">
+        {{ 'Watched' if film.watched else 'Mark watched' }}
+      </button>
+    </form>
+  </div>
+
+</article>

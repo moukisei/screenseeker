@@ -1,0 +1,50 @@
+# systemd unit for the ScreenSeeker web app.
+#
+# Install:
+#   sudo cp deploy/screenseeker.service /etc/systemd/system/
+#   sudo cp deploy/screenseeker.env    /etc/screenseeker.env   # then edit it
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now screenseeker
+#
+# Logs: journalctl -u screenseeker -f
+#
+# Adjust User, WorkingDirectory and the venv path to your box. The app binds to
+# loopback; the reverse proxy (see Caddyfile) is what faces the internet.
+
+[Unit]
+Description=ScreenSeeker web app
+After=network.target
+
+[Service]
+Type=exec
+User=screenseeker
+Group=screenseeker
+WorkingDirectory=/opt/screenseeker
+
+# Every secret and path lives here, not in this unit. 0600, owned by root.
+EnvironmentFile=/etc/screenseeker.env
+
+# --proxy-headers so the app trusts X-Forwarded-Proto from the local proxy and
+# knows the original request was HTTPS. Bind to loopback only.
+ExecStart=/opt/screenseeker/.venv/bin/uvicorn \
+    --factory screenseeker.web.app:create_app \
+    --host 127.0.0.1 --port 8000 \
+    --proxy-headers --forwarded-allow-ips 127.0.0.1
+
+Restart=on-failure
+RestartSec=2
+
+# A restart fails any job left running - the app reaps orphaned job rows on
+# startup, so this is safe and expected.
+TimeoutStopSec=20
+
+# Hardening. The app needs to read its code and write only its data directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# The one writable path: wherever SCREENSEEKER_DB_PATH points.
+ReadWritePaths=/var/lib/screenseeker
+
+[Install]
+WantedBy=multi-user.target

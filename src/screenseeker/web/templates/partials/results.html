@@ -1,0 +1,61 @@
+{#
+  The count, the grid and the pager - everything that changes when a filter,
+  the sort or the page changes. Lives in its own element so the filter form
+  above it is never swapped: that is what lets the search box filter as you
+  type without losing focus, and what stops htmx dropping its value from the
+  request.
+
+  Returned on its own to HTMX (target #results), and included by library.html
+  on a full page load.
+
+  `params` holds everything that identifies the current view, so pager links
+  merge into it rather than rebuilding a query string and dropping a filter.
+#}
+<p class="count">
+  {{ total }} film{{ '' if total == 1 else 's' }}
+  {%- if filters.is_active %} match{{ 'es' if total == 1 else '' }} this filter{% endif %}
+  {%- if pages > 1 %} · page {{ page }} of {{ pages }}{% endif %}
+</p>
+
+{% if films %}
+  <div class="grid">
+    {% for film in films %}
+      {% with mark = card_marks.get(film.id) %}
+        {% include "partials/card.html" %}
+      {% endwith %}
+    {% endfor %}
+  </div>
+{% else %}
+  <p class="empty">
+    {% if filters.is_active %}
+      Nothing matches “{{ filters.query or '' }}”{{ '' if filters.query else ' this filter' }}.
+    {% elif total %}
+      Nothing on this page. <a href="/?sort={{ sort }}">Back to the start.</a>
+    {% else %}
+      Your library is empty. Run <code>screenseeker sync</code>, then
+      <code>screenseeker refresh</code>.
+    {% endif %}
+  </p>
+{% endif %}
+
+{% if pages > 1 %}
+  <nav class="pager" aria-label="Pagination">
+    {% if page > 1 %}
+      {% set previous = '/?' ~ dict(params, page=page - 1)|urlencode %}
+      <a href="{{ previous }}"
+         hx-get="{{ previous }}" hx-target="#results" hx-swap="innerHTML" hx-push-url="true">← Previous</a>
+    {% else %}
+      <span class="disabled">← Previous</span>
+    {% endif %}
+
+    <span class="pager__position">{{ page }} / {{ pages }}</span>
+
+    {% if page < pages %}
+      {% set following = '/?' ~ dict(params, page=page + 1)|urlencode %}
+      <a href="{{ following }}"
+         hx-get="{{ following }}" hx-target="#results" hx-swap="innerHTML" hx-push-url="true">Next →</a>
+    {% else %}
+      <span class="disabled">Next →</span>
+    {% endif %}
+  </nav>
+{% endif %}

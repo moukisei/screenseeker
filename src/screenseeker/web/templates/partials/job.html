@@ -1,0 +1,64 @@
+{#
+  A background job's status. Polls itself once a second while the job is
+  active and stops asking when it reaches a terminal state - the terminal
+  fragment carries no hx-trigger, so there is nothing to cancel.
+
+  `refused` is set when a start request was rejected because this job was
+  already running.
+#}
+<div id="job-panel"
+     class="job job--{{ job.status }}"
+     {% if job.is_active %}
+     hx-get="/jobs/{{ job.id }}"
+     hx-trigger="load delay:1s"
+     hx-target="this"
+     hx-swap="outerHTML"
+     {% endif %}>
+
+  {% if refused %}
+    <p class="job__refused">{{ refused }}</p>
+  {% endif %}
+
+  <p class="job__head">
+    <span class="job__label">{{ job.label }}</span>
+    <span class="job__status">{{ job.status }}</span>
+  </p>
+
+  {% if job.message %}<p class="job__message">{{ job.message }}</p>{% endif %}
+
+  {#
+    A themed bar rather than the browser's <progress>, which ignores the dark
+    theme. The fill has a width transition, so it slides towards the next value
+    across the one-second gap between polls instead of stepping.
+  #}
+  {% if job.progress_total %}
+    <div class="progress" role="progressbar"
+         aria-valuenow="{{ job.progress_current }}" aria-valuemin="0"
+         aria-valuemax="{{ job.progress_total }}">
+      <div class="progress__fill" style="width: {{ job.percent }}%"></div>
+    </div>
+    <p class="job__counts">
+      <span class="job__percent">{{ job.percent }}%</span>
+      {{ job.progress_current }} of {{ job.progress_total }} films
+    </p>
+  {% elif job.is_active %}
+    {# No total yet - the scrape runs before the count is known. An
+       indeterminate sweep says "working" without claiming a fraction. #}
+    <div class="progress progress--indeterminate"><div class="progress__fill"></div></div>
+  {% endif %}
+
+  {#
+    Shown whenever it is set, including on a job that otherwise succeeded: a
+    refresh where 12 of 181 films failed did finish, and burying those 12 is
+    the vanishing this panel exists to stop.
+  #}
+  {% if job.error %}
+    <pre class="job__error">{{ job.error }}</pre>
+  {% endif %}
+
+  {% if not job.is_active %}
+    <p class="job__done">
+      <a href="/">Reload the library</a> to see the result.
+    </p>
+  {% endif %}
+</div>

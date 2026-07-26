@@ -18,7 +18,18 @@ dependencies = [
     "sqlalchemy (>=2.0.44,<3.0.0)",
     "click (>=8.3.0,<9.0.0)",
     "pytest (>=9.0.0,<10.0.0)",
-    "tomli-w (>=1.0.0,<2.0.0)"
+    "tomli-w (>=1.0.0,<2.0.0)",
+    "alembic (>=1.18.0,<2.0.0)"
+]
+
+[project.optional-dependencies]
+# Needed only by `screenseeker serve`.
+web = [
+    "fastapi (>=0.115.0,<1.0.0)",
+    "uvicorn[standard] (>=0.32.0,<1.0.0)",
+    "jinja2 (>=3.1.0,<4.0.0)",
+    # FastAPI parses form bodies through this; the watched toggle posts a form.
+    "python-multipart (>=0.0.9,<1.0.0)",
 ]
 
 [tool.poetry]
@@ -60,7 +71,6 @@ module = [
     "screenseeker.logger",
     "screenseeker.config",
     "screenseeker.models",
-    "screenseeker.enrich",
     "screenseeker.exceptions",
 ]
 ignore_errors = true

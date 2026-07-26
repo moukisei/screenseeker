@@ -224,22 +224,29 @@ class TMDBEnricher(BaseEnricher):
 
         return result
 
-    def _get_watch_providers(self, movie_id: int) -> dict:
+    def _get_movie_details(self, movie_id: int) -> dict:
         """
-        Get streaming providers for a movie across all countries.
+        Get a movie's full details and its watch providers in one request.
+
+        `append_to_response=watch/providers` folds the providers into the
+        details call, so runtime (details-only, absent from search results)
+        costs no extra request over the providers fetch this replaces.
 
         Args:
             movie_id: TMDB movie ID
 
         Returns:
-            Watch providers data by country
+            The movie details dict, with providers under "watch/providers".
+            Empty on failure - the caller treats that as "no runtime, no
+            offers", the same as an unmatched film.
         """
         try:
-            data = self._make_request(f"/movie/{movie_id}/watch/providers")
-            return data.get("results", {})
+            return self._make_request(
+                f"/movie/{movie_id}", {"append_to_response": "watch/providers"}
+            )
 
         except requests.RequestException as e:
-            self.logger.error(f"Failed to get watch providers for movie {movie_id}: {e}")
+            self.logger.error(f"Failed to get details for movie {movie_id}: {e}")
             return {}
 
     def _calculate_match_confidence(
@@ -296,6 +303,9 @@ class TMDBEnricher(BaseEnricher):
             backdrop_path=movie_data.get("backdrop_path"),
             vote_average=movie_data.get("vote_average"),
             popularity=movie_data.get("popularity"),
+            # Present only on the details endpoint, so null when this is parsed
+            # from a search result rather than a details fetch.
+            runtime=movie_data.get("runtime"),
         )
 
     def _parse_streaming_offers(self, providers_by_country: dict) -> list[StreamingOffer]:
@@ -313,6 +323,13 @@ class TMDBEnricher(BaseEnricher):
         for country_code, country_data in providers_by_country.items():
             country_name = self.COUNTRY_NAMES.get(country_code, country_code)
 
+            # TMDB gives one link per country - a page listing every way to
+            # watch this film there, with working provider links. There is no
+            # per-provider deep link in this endpoint, so every offer in the
+            # country shares it. Without this, cards have a provider name but
+            # nowhere to click.
+            country_link = country_data.get("link")
+
             # TMDB provides: flatrate, rent, buy, free, ads
             for offer_type in ["flatrate", "rent", "buy", "free", "ads"]:
                 providers = country_data.get(offer_type, [])
@@ -324,6 +341,7 @@ class TMDBEnricher(BaseEnricher):
                         provider_id=provider["provider_id"],
                         provider_name=provider["provider_name"],
                         offer_type=offer_type,
+                        streaming_url=country_link,
                         logo_path=provider.get("logo_path"),
                         display_priority=provider.get("display_priority"),
                     )
@@ -366,16 +384,20 @@ class TMDBEnricher(BaseEnricher):
                     error_message=f"No TMDB match found for '{title}'",
                 )
 
-            # Parse movie info
-            tmdb_movie = self._parse_tmdb_movie(movie_data)
+            # The search result names the match; the details call carries the
+            # rest (runtime) plus the providers, folded in via append_to_response.
+            # Parse from details when it succeeds, falling back to the search
+            # result so a details failure still yields the match, minus runtime.
+            details = self._get_movie_details(movie_data["id"])
+            tmdb_movie = self._parse_tmdb_movie(details or movie_data)
 
             # Calculate match confidence
             confidence = self._calculate_match_confidence(
                 title, year, tmdb_movie.title, tmdb_movie.year
             )
 
-            # Get streaming providers
-            providers_data = self._get_watch_providers(tmdb_movie.tmdb_id)
+            # Streaming providers rode in on the details response.
+            providers_data = details.get("watch/providers", {}).get("results", {})
             streaming_offers = self._parse_streaming_offers(providers_data)
 
             # Calculate statistics

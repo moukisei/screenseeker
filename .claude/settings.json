@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ruff format:*)",
+      "Bash(git -C /Users/mouktarabdillahi/projects/screenseeker rm:*)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python -m pytest -q)",
+      "Bash(.venv/bin/screenseeker enrich *)",
+      "Bash(.venv/bin/python -c \"import screenseeker.services, screenseeker.web.app; screenseeker.web.app.create_app\\(\\); print\\('imports ok'\\)\")"
+    ]
+  }
+}

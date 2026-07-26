@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}ScreenSeeker{% endblock %}</title>
+  {#
+    htmx ignores the body of a non-2xx response by default. A refused job
+    start is a genuine 409 whose body is the panel showing what is already
+    running, so that one code is allowed to swap. Configured through the meta
+    tag rather than a script because htmx.min.js below is deferred and would
+    not exist yet.
+  #}
+  <meta name="htmx-config" content='{"responseHandling":[{"code":"204","swap":false},{"code":"409","swap":true},{"code":"[23]..","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
+  <link rel="icon" href="{{ url_for('static', path='/favicon.svg') }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ url_for('static', path='/app.css') }}">
+  {# Vendored rather than pulled from a CDN: the app is expected to run on a
+     machine that may have no route to the public internet. #}
+  <script src="{{ url_for('static', path='/htmx.min.js') }}" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">
+      <img class="brand__logo" src="{{ url_for('static', path='/favicon.svg') }}" alt="" width="24" height="24">
+      ScreenSeeker
+    </a>
+    {# Active tab is derived from the path, so no route has to pass it in. #}
+    {% set path = request.url.path %}
+    <nav class="nav">
+      <a href="/tonight"{% if path == '/tonight' %} class="nav--active"{% endif %}>Tonight</a>
+      <a href="/"{% if path == '/' %} class="nav--active"{% endif %}>Library</a>
+      <a href="/stale"{% if path == '/stale' %} class="nav--active"{% endif %}>Stale</a>
+      <a href="/profile"{% if path == '/profile' %} class="nav--active"{% endif %}>Profile</a>
+      {% if auth_enabled() %}
+        {# A POST so it is CSRF-checked like every other mutation. #}
+        <form class="nav__logout" method="post" action="/logout">
+          <button type="submit">Sign out</button>
+        </form>
+      {% endif %}
+    </nav>
+  </header>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

@@ -1,95 +1,128 @@
 # ScreenSeeker 🎬
 
-Find where to watch films from your Letterboxd watchlist with personalized recommendations based on your streaming subscriptions.
+Find where to watch the films on your Letterboxd watchlist, ranked by what you
+already pay for.
 
-## Features
+ScreenSeeker takes three things — your Letterboxd watchlist, your streaming
+subscriptions, and (optionally) which countries your VPN can reach — and answers
+the only question that matters on a given evening: *what can I actually watch
+tonight, without paying for anything new?* It pulls your watchlist, looks up
+each film's streaming availability per country from TMDB, and matches that
+against your subscriptions, flagging the ones that are one click from playing.
 
-- **Personalized Recommendations** - Analyzes YOUR specific subscriptions (Netflix, Prime, Canal+, etc.)
-- **VPN-Aware** - Suggests which countries to connect to for optimal streaming
-- **Smart Caching** - 7-day local database cache for instant queries
-- **Letterboxd Integration** - Import your watchlist via HTML scraping or CSV
-- **Watch Tracking** - Mark films as watched and manage your progress
+The primary interface is a **web app**. The CLI exists to set the tool up and
+keep the local mirror fresh; browsing, searching and filtering all live in the
+browser.
 
-## Quick Start
+---
 
-### 1. Install
+## How it works
+
+1. **`sync`** scrapes your Letterboxd watchlist into a local SQLite database.
+2. **`refresh`** asks TMDB, per film, where it streams in every country and how
+   long it runs, caching the answer for 7 days.
+3. The **web app** reads that cache and, against your subscription profile,
+   shows each film as "watchable tonight" (a green ▶ with the provider),
+   "available somewhere" (an offer count), or "nowhere to stream".
+
+None of the browsing touches the network — it's all served from the local cache,
+so the grid is instant. Only `sync` and `refresh` reach out.
+
+---
+
+## The web app
+
+Start it with `screenseeker serve` and open `http://127.0.0.1:8000`. The pages:
+
+- **Library** (`/`) — the whole watchlist as a poster grid. Filter by provider,
+  country, offer type and watched state, sort, and search by title as you type.
+  Every filter is a query parameter, so any view is a bookmarkable URL. Each
+  card shows year, rating, runtime, a "watchable tonight" badge when one applies,
+  and a one-click **Mark watched** toggle.
+- **Tonight** (`/tonight`) — only the films you can watch right now: unwatched,
+  in your base country, no VPN. The actual product.
+- **Stale** (`/stale`) — films whose streaming data has aged past the cache TTL,
+  with a button to refresh them.
+- **Profile** (`/profile`) — edit your base country, subscriptions and VPN
+  settings in the browser instead of the CLI wizard.
+- **Film detail** (`/film/{id}`) — every way to watch one film, including VPN
+  suggestions ranked by your country priority.
+
+`sync` and `refresh` can also be launched from the web UI (the buttons at the
+top of the Library). They run as background jobs; a running job survives page
+navigation and only one of each kind runs at a time.
+
+### Authentication
+
+Set `SCREENSEEKER_PASSWORD` and the whole app requires a login: every page needs
+a session cookie, and every state-changing request is checked for a same-origin
+header (CSRF). Leave it empty and the app is open — the right choice behind a
+private network (e.g. Tailscale), and the wrong one on the public internet. There
+is no third state. See [Deployment](#deployment).
+
+---
+
+## Quick start (local)
+
+Requires **Python 3.14+** and a free [TMDB API key](https://www.themoviedb.org/settings/api).
 
 ```bash
-# Clone the repository
 git clone https://github.com/moukisei/screenseeker.git
 cd screenseeker
 
-# Install the package (this makes the 'screenseeker' command available)
-pip install -e .
-# or with poetry
-poetry install
-```
+# Install with the web extras (uvicorn, FastAPI, Jinja, htmx are bundled).
+pip install -e '.[web]'
 
-### 2. Configure
-
-Run the setup wizard — it walks you through everything interactively:
-
-```bash
+# One-time interactive setup: Letterboxd username, base country, TMDB key,
+# and your streaming subscriptions.
 screenseeker config init
-```
 
-You will be prompted for:
-- Your Letterboxd username (used to scrape your watchlist)
-- Your base country (e.g. `FR`, `US`, `GB`)
-- Your TMDB API key — get one free at [themoviedb.org](https://www.themoviedb.org/settings/api)
-- Your streaming subscriptions (name, VPN availability, bundled services)
-
-The config is saved to `~/.config/screenseeker/config.toml`.
-
-### 3. Run
-
-```bash
-# Find where to watch a film
-screenseeker watch "The Matrix (1999)"
-
-# Sync your Letterboxd watchlist
+# Pull your watchlist, then fetch availability + runtimes.
 screenseeker sync
+screenseeker refresh
 
-# Search your library
-screenseeker search matrix
+# Start the web app.
+screenseeker serve            # http://127.0.0.1:8000
 ```
 
-## Example Output
+By default `serve` binds to loopback only. Exposing it to a network is a
+deliberate act — see [Deployment](#deployment).
 
-```
-🔍 Searching for: 'The Matrix' (1999)
+---
 
-================================================================================
-HOW TO WATCH
-================================================================================
+## The CLI
 
-🎯 TMDB Match: The Matrix (1999) - Confidence: exact
-   ⭐ Rating: 8.7/10
+The CLI is plumbing: set up, keep fresh, serve.
 
-✅ WATCH NOW (No VPN needed):
-   Netflix - France
+| Command | What it does |
+|---|---|
+| `screenseeker config init` | Interactive first-time setup wizard. |
+| `screenseeker config edit` | Open the config file in `$EDITOR`. |
+| `screenseeker config path` | Print where the config and database live. |
+| `screenseeker sync` | Scrape the Letterboxd watchlist into the database. Adds new films. |
+| `screenseeker refresh` | Fetch TMDB availability + runtime for films whose cache is stale. |
+| `screenseeker serve` | Start the web app (`--host`, `--port`, `--reload`). |
 
-🌍 VPN OPTIONS:
-   Netflix - Connect to United States
-   Netflix - Connect to United Kingdom
-```
+`refresh` only touches films older than the cache TTL (7 days) or never checked.
+To force a full re-fetch — for example to backfill a newly added field across the
+whole library — use `screenseeker refresh --days 0`. Other flags: `--limit N`
+(cap how many films), `--dry-run`, `--yes` (skip the prompt).
+
+> **Never run two `sync`s at once.** Sync is the one operation that can create
+> duplicate films if it races itself. `refresh` is safe to overlap — it only
+> rewrites offers for films that already exist.
+
+---
 
 ## Configuration
 
-### Subscription profile
+Setup writes a TOML file (default `~/.config/screenseeker/config.toml`) holding
+your Letterboxd username, TMDB key, base country and subscriptions:
 
-```bash
-screenseeker config init          # First-time interactive setup
-screenseeker config show          # Display current config
-screenseeker config add           # Add a subscription (guided prompts)
-screenseeker config remove NAME   # Remove a subscription
-screenseeker config set-country CODE  # Change your base country (e.g. US)
-screenseeker config edit          # Open config file in $EDITOR
-```
+```toml
+[letterboxd]
+username = "moukisei"
 
-The config file lives at `~/.config/screenseeker/config.toml`:
-
-```
 [tmdb]
 api_key = "your_api_key_here"
 rate_limit = 5.0
@@ -98,7 +131,7 @@ language = "en-US"
 [profile]
 base_country = "FR"
 max_vpn_suggestions = 3
-vpn_country_priority = ["US", "GB", "CA", ...]
+vpn_country_priority = ["US", "GB", "CA", "..."]
 
 [[profile.subscriptions]]
 provider_names = ["Netflix"]
@@ -106,97 +139,115 @@ vpn_enabled = true
 available_countries = "all"
 
 [[profile.subscriptions]]
-provider_names = ["Canal+", "Canal Plus"]
+provider_names = ["Canal+"]
 vpn_enabled = false
 available_countries = ["FR"]
-bundle_includes = ["HBO Max", "Apple TV+"]
+bundle_includes = ["HBO Max", "Apple TV+", "Paramount+"]
 ```
 
-### Scraper & logging settings
+`provider_names` is a list because a service can be renamed or span multiple TMDB
+names; `bundle_includes` lets a subscription (e.g. Canal+) cover the services it
+bundles.
 
-These are optional and can be overridden via shell environment variables:
+### Environment variables
 
-```bash
-LOG_LEVEL=DEBUG screenseeker watch "Inception"
-OUTPUT_DIR=/tmp/screenseeker screenseeker sync
-```
+Every setting is read once at process start. Anything sensitive or
+deployment-specific is best set here rather than in the config file.
 
-## Project Structure
+| Variable | Default | Purpose |
+|---|---|---|
+| `TMDB_API_KEY` | — | TMDB key. Overrides the config file; keeps the key out of `config.toml`. |
+| `SCREENSEEKER_PASSWORD` | *(empty)* | Set it to require a login. Empty = open app. |
+| `SCREENSEEKER_SECRET_KEY` | *(derived from password)* | Signs the session cookie. Set it (`openssl rand -hex 32`) so a password change doesn't log every device out. |
+| `SCREENSEEKER_COOKIE_SECURE` | `true` | Cookie only sent over HTTPS. Keep true behind TLS; false only for local http testing. |
+| `SCREENSEEKER_HOST` | `127.0.0.1` | Bind address. Loopback by default. |
+| `SCREENSEEKER_PORT` | `8000` | Bind port. |
+| `SCREENSEEKER_DB_PATH` | `~/.local/share/screenseeker/screenseeker.db` | SQLite database file. |
+| `SCREENSEEKER_CONFIG_PATH` | `~/.config/screenseeker/config.toml` | Config file location. |
+| `SCREENSEEKER_CACHE_TTL_DAYS` | `7` | How long availability data stays fresh before a film is "stale". |
+| `SCREENSEEKER_SESSION_MAX_AGE_DAYS` | `14` | Login session lifetime. |
+| `SCREENSEEKER_DEBUG` | `false` | Enables `/docs` and tracebacks. Keep off in production. |
+| `LOG_LEVEL` | `INFO` | Logging verbosity. |
 
-```
-screenseeker/
-├── src/screenseeker/
-│   ├── cli.py              # Main CLI interface
-│   ├── config.py           # Low-level defaults (scraper, logging)
-│   ├── user_config.py      # Config file management (~/.config/screenseeker/)
-│   ├── database/           # SQLAlchemy ORM & queries
-│   ├── enrichers/          # TMDB API & watch strategy
-│   ├── scrapers/           # Letterboxd HTML/CSV import
-│   └── exporters/          # JSON export
-└── tests/                  # Test suite (mirrors src/ structure)
-```
-
-## Requirements
-
-- Python 3.14+
-- TMDB API key (free at [themoviedb.org](https://www.themoviedb.org/settings/api))
-- Optional: Letterboxd account for watchlist import
-
-## Testing
-
-```bash
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=src/screenseeker --cov-report=html
-
-# Run specific test file
-pytest tests/database/test_database.py -v
-```
-
-## Troubleshooting
-
-**"No config file found"**
-→ Run `screenseeker config init` to create your config
-
-**"TMDB API key not configured"**
-→ Run `screenseeker config init` or set `api_key` in `~/.config/screenseeker/config.toml`
-
-**"Film not found"**
-→ Try adding the year: `screenseeker watch "Dune" --year 2021`
-
-**"No films found"**
-→ Run `screenseeker sync` first to import your watchlist
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Install pre-commit hooks: `pre-commit install`
-4. Make your changes (pre-commit will run automatically)
-5. Add tests
-6. Submit a pull request
-
-### Pre-commit Hooks
-
-This project uses pre-commit hooks to maintain code quality:
-- **Ruff**: Fast linting and formatting
-- **isort**: Import sorting
-- **mypy**: Static type checking
-- **Bandit**: Security checks
-
-Run manually: `pre-commit run --all-files`
-
-## License
-
-Apache 2.0 — see [LICENSE](LICENSE) file for details.
-
-## Links
-
-- TMDB API: https://www.themoviedb.org/settings/api
-- Letterboxd: https://letterboxd.com/
+`screenseeker config path` prints the resolved config and database locations for
+your environment.
 
 ---
 
-**Made with ❤️ for cinephiles who want to actually watch their watchlist**
+## Deployment
+
+The app never faces the internet directly — a reverse proxy terminates TLS and
+forwards to it on loopback. Two supported models:
+
+- **Private (Tailscale)** — reachable from your own devices, no domain, no TLS,
+  no password. Fewest moving parts.
+- **Public (password + TLS)** — a login gates it and Caddy handles Let's Encrypt
+  certificates automatically. Needs a domain.
+
+The [`deploy/`](deploy/) directory is the complete kit — a systemd unit, a Caddy
+config, an environment template, a backup script and a cron entry — with a
+walkthrough in **[`deploy/README.md`](deploy/README.md)**.
+
+For a concrete, end-to-end **free** deployment on an Oracle Cloud Always Free VM
+with a free DuckDNS domain, see
+**[`deploy/oracle-free-tier.md`](deploy/oracle-free-tier.md)**.
+
+---
+
+## Architecture
+
+- **FastAPI + uvicorn**, server-rendered Jinja templates, **htmx** for in-page
+  updates (vendored, no CDN). One long-running process, a single worker — the
+  background job runner and its single-flight guard live in-process, so the app
+  is not safe to run multi-worker or autoscaled.
+- **SQLite** for storage, one file. Schema changes ship as **Alembic**
+  migrations (`alembic upgrade head`).
+- **TMDB** for availability, ratings and runtime, fetched once per film per
+  refresh (a details call with providers appended) and cached.
+- **Letterboxd** watchlist import via HTML scraping.
+
+```
+src/screenseeker/
+├── cli.py              # The CLI commands
+├── settings.py         # Environment-resolved runtime settings
+├── user_config.py      # config.toml read/write
+├── database/           # SQLAlchemy models + session
+├── enrichers/          # TMDB client + watch strategy
+├── scrapers/           # Letterboxd import
+├── services/           # Library, enrichment, watch, jobs, profile
+└── web/                # FastAPI app, routes, templates, static, auth
+migrations/             # Alembic migrations
+deploy/                 # Production deployment kit
+tests/                  # Test suite, mirrors src/
+```
+
+---
+
+## Development
+
+```bash
+pip install -e '.[web]'
+pre-commit install          # ruff, isort, mypy, bandit
+
+pytest                      # run the suite
+pytest tests/web -q         # a subset
+```
+
+New database columns need a migration:
+
+```bash
+alembic revision -m "describe the change"   # then edit the generated file
+alembic upgrade head
+```
+
+Pre-commit runs ruff (lint + format), isort, mypy and bandit on every commit.
+
+---
+
+## License
+
+Apache 2.0 — see [LICENSE](LICENSE).
+
+---
+
+**Made for cinephiles who want to actually watch their watchlist.**
