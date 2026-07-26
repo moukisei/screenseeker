@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sign in · ScreenSeeker</title>
+  <link rel="icon" href="{{ url_for('static', path='/favicon.svg') }}" type="image/svg+xml">
   <link rel="stylesheet" href="{{ url_for('static', path='/app.css') }}">
 </head>
 <body>
@@ -12,7 +13,10 @@
     logged-out visitor cannot reach, and this page needs no session of its own.
   #}
   <main class="login">
-    <h1 class="brand">ScreenSeeker</h1>
+    <h1 class="brand">
+      <img class="brand__logo" src="{{ url_for('static', path='/favicon.svg') }}" alt="" width="30" height="30">
+      ScreenSeeker
+    </h1>
     <p class="tagline">What can I watch tonight, on what I already pay for.</p>
 
     <form class="login-form" method="post" action="/login">

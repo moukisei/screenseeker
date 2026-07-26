@@ -12,6 +12,7 @@
     not exist yet.
   #}
   <meta name="htmx-config" content='{"responseHandling":[{"code":"204","swap":false},{"code":"409","swap":true},{"code":"[23]..","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
+  <link rel="icon" href="{{ url_for('static', path='/favicon.svg') }}" type="image/svg+xml">
   <link rel="stylesheet" href="{{ url_for('static', path='/app.css') }}">
   {# Vendored rather than pulled from a CDN: the app is expected to run on a
      machine that may have no route to the public internet. #}
@@ -19,7 +20,10 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/">ScreenSeeker</a>
+    <a class="brand" href="/">
+      <img class="brand__logo" src="{{ url_for('static', path='/favicon.svg') }}" alt="" width="24" height="24">
+      ScreenSeeker
+    </a>
     {# Active tab is derived from the path, so no route has to pass it in. #}
     {% set path = request.url.path %}
     <nav class="nav">

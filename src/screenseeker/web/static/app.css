@@ -33,7 +33,9 @@ code { background: var(--panel); padding: 0 .3em; border-radius: 4px; font-size:
   padding: 1rem 1.5rem;
   border-bottom: 1px solid var(--line);
 }
-.brand { font-weight: 700; font-size: 1.15rem; text-decoration: none; }
+.brand { font-weight: 700; font-size: 1.15rem; text-decoration: none;
+  display: inline-flex; align-items: center; gap: .5rem; }
+.brand__logo { display: block; }
 .tagline { margin: 0; color: var(--muted); font-size: .875rem; }
 
 .nav { display: flex; gap: 1.1rem; }
