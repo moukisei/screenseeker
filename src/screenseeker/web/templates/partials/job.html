@@ -26,11 +26,25 @@
 
   {% if job.message %}<p class="job__message">{{ job.message }}</p>{% endif %}
 
+  {#
+    A themed bar rather than the browser's <progress>, which ignores the dark
+    theme. The fill has a width transition, so it slides towards the next value
+    across the one-second gap between polls instead of stepping.
+  #}
   {% if job.progress_total %}
-    <progress class="job__bar" value="{{ job.progress_current }}" max="{{ job.progress_total }}"></progress>
-    <p class="job__counts">{{ job.progress_current }} / {{ job.progress_total }} · {{ job.percent }}%</p>
+    <div class="progress" role="progressbar"
+         aria-valuenow="{{ job.progress_current }}" aria-valuemin="0"
+         aria-valuemax="{{ job.progress_total }}">
+      <div class="progress__fill" style="width: {{ job.percent }}%"></div>
+    </div>
+    <p class="job__counts">
+      <span class="job__percent">{{ job.percent }}%</span>
+      {{ job.progress_current }} of {{ job.progress_total }} films
+    </p>
   {% elif job.is_active %}
-    <progress class="job__bar"></progress>
+    {# No total yet - the scrape runs before the count is known. An
+       indeterminate sweep says "working" without claiming a fraction. #}
+    <div class="progress progress--indeterminate"><div class="progress__fill"></div></div>
   {% endif %}
 
   {#

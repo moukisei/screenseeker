@@ -14,8 +14,8 @@
 
     <div class="grid">
       {% for pick in picks %}
-        {# The grid card, plus the one thing this view adds: what to watch it on. #}
-        {% with film = pick.film, tonight_option = pick.best_option %}
+        {# The grid card, plus the deep-linked badge for the option it is here for. #}
+        {% with film = pick.film, mark = marks.get(pick.film.id) %}
           {% include "partials/card.html" %}
         {% endwith %}
       {% endfor %}

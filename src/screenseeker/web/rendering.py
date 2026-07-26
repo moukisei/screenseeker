@@ -7,6 +7,7 @@ runtime state, so they do not vary between a laptop and a server - the rule
 about `__file__` is about the database, the config and the output directory.
 """
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -39,8 +40,38 @@ def _days(value: Optional[int]) -> str:
     return f"checked {value} days ago"
 
 
+def _ago(value: Optional[datetime]) -> str:
+    """A past datetime as a coarse relative phrase, for the watched date."""
+    if value is None:
+        return ""
+    aware = value if value.tzinfo else value.replace(tzinfo=UTC)
+    days = (datetime.now(UTC) - aware).days
+    if days <= 0:
+        return "today"
+    if days == 1:
+        return "yesterday"
+    if days < 30:
+        return f"{days} days ago"
+    # Past a month the exact day matters less than the date itself.
+    return f"on {aware.date().isoformat()}"
+
+
+def _runtime(value: Optional[int]) -> str:
+    """Runtime in minutes as a compact 2h 5m, or an em dash when unknown."""
+    if not value or value <= 0:
+        return "—"
+    hours, minutes = divmod(value, 60)
+    if hours and minutes:
+        return f"{hours}h {minutes}m"
+    if hours:
+        return f"{hours}h"
+    return f"{minutes}m"
+
+
 templates.env.filters["rating"] = _rating
 templates.env.filters["days"] = _days
+templates.env.filters["ago"] = _ago
+templates.env.filters["runtime"] = _runtime
 
 # Read at render time, not import: tests toggle the password via monkeypatch.
 # The template uses it only to decide whether to show a Sign out control.

@@ -22,6 +22,7 @@
       <p class="detail__meta">
         {{ film.year or 'Year unknown' }}
         {%- if film.vote_average %} · ★ {{ film.vote_average|rating }}{% endif %}
+        {%- if film.runtime %} · {{ film.runtime|runtime }}{% endif %}
         {%- if film.match_confidence %} · TMDB match: {{ film.match_confidence }}{% endif %}
       </p>
 

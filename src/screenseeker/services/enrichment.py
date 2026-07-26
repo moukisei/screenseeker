@@ -211,6 +211,7 @@ def _apply_tmdb_fields(film: Film, tmdb_movie) -> None:
     film.poster_path = tmdb_movie.poster_path
     film.overview = tmdb_movie.overview
     film.vote_average = tmdb_movie.vote_average
+    film.runtime = tmdb_movie.runtime
 
 
 def save_streaming_offers(

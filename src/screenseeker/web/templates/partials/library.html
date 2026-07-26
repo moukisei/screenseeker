@@ -1,22 +1,30 @@
 {#
-  Filters + grid + pagination. Rendered inside index.html on a full page load
-  and returned on its own to HTMX, so every control below swaps this element
-  by outerHTML and pushes the equivalent URL - a filtered, sorted, paged view
-  stays bookmarkable and the back button works.
+  The filter form (static) plus a swappable #results region.
 
-  `params` holds everything that identifies the current view. Links merge into
-  it rather than rebuilding a query string, so adding a filter never silently
-  drops one.
+  The form is never replaced by a filter/sort/search request - those swap
+  #results only. That is deliberate: it keeps the search box's focus and caret
+  while you type, and keeps its value in every request (an input that gets
+  swapped mid-keystroke is the bug that made search look broken). A full page
+  load renders this whole block; every in-page update touches #results alone.
 #}
 <div id="library" class="library">
 
   <form class="filters" action="/" method="get"
-        hx-get="/" hx-target="#library" hx-swap="outerHTML" hx-push-url="true"
-        hx-trigger="change, submit">
+        hx-get="/" hx-target="#results" hx-swap="innerHTML" hx-push-url="true"
+        hx-trigger="change, submit, keyup changed delay:300ms from:input[name='query']">
 
-    {# Changing a filter goes back to page 1: page 4 of the old result set is
-       meaningless against the new one. Omitting the parameter does that. #}
+    {# Any filter change goes back to page 1: page 4 of the old result set is
+       meaningless against the new one. The form carries no page field, so the
+       server defaults to 1. #}
     <input type="hidden" name="per_page" value="{{ per_page }}">
+
+    <label class="filters__search">
+      Search
+      {# Filters as you type (debounced), and on Enter or Apply. Because only
+         #results swaps, this box is never rebuilt, so focus and value survive. #}
+      <input type="search" name="query" placeholder="Title…"
+             value="{{ filters.query or '' }}" autocomplete="off">
+    </label>
 
     <label>
       Provider
@@ -66,57 +74,15 @@
     </label>
 
     <button type="submit" class="filters__apply">Apply</button>
+    {# A full navigation, so the form itself resets to blank - it is outside
+       #results and so is not otherwise re-rendered. #}
     {% if filters.is_active %}
-      <a class="filters__clear" href="/?sort={{ sort }}"
-         hx-get="/?sort={{ sort }}" hx-target="#library" hx-swap="outerHTML" hx-push-url="true">Clear</a>
+      <a class="filters__clear" href="/?sort={{ sort }}">Clear</a>
     {% endif %}
   </form>
 
-  <p class="count">
-    {{ total }} film{{ '' if total == 1 else 's' }}
-    {%- if filters.is_active %} match{{ 'es' if total == 1 else '' }} this filter{% endif %}
-    {%- if pages > 1 %} · page {{ page }} of {{ pages }}{% endif %}
-  </p>
-
-  {% if films %}
-    <div class="grid">
-      {% for film in films %}
-        {% include "partials/card.html" %}
-      {% endfor %}
-    </div>
-  {% else %}
-    <p class="empty">
-      {% if filters.is_active %}
-        Nothing matches. <a href="/?sort={{ sort }}">Clear the filters.</a>
-      {% elif total %}
-        Nothing on this page. <a href="/?sort={{ sort }}">Back to the start.</a>
-      {% else %}
-        Your library is empty. Run <code>screenseeker sync</code>, then
-        <code>screenseeker refresh</code>.
-      {% endif %}
-    </p>
-  {% endif %}
-
-  {% if pages > 1 %}
-    <nav class="pager" aria-label="Pagination">
-      {% if page > 1 %}
-        {% set previous = '/?' ~ dict(params, page=page - 1)|urlencode %}
-        <a href="{{ previous }}"
-           hx-get="{{ previous }}" hx-target="#library" hx-swap="outerHTML" hx-push-url="true">← Previous</a>
-      {% else %}
-        <span class="disabled">← Previous</span>
-      {% endif %}
-
-      <span class="pager__position">{{ page }} / {{ pages }}</span>
-
-      {% if page < pages %}
-        {% set following = '/?' ~ dict(params, page=page + 1)|urlencode %}
-        <a href="{{ following }}"
-           hx-get="{{ following }}" hx-target="#library" hx-swap="outerHTML" hx-push-url="true">Next →</a>
-      {% else %}
-        <span class="disabled">Next →</span>
-      {% endif %}
-    </nav>
-  {% endif %}
+  <div id="results">
+    {% include "partials/results.html" %}
+  </div>
 
 </div>

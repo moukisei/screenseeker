@@ -174,17 +174,65 @@ class TestFiltering:
     def test_filters_round_trip_through_url_parameters(self):
         """Views are bookmarkable, so the filter has to survive the URL."""
         original = LibraryFilter(
-            provider="Netflix", country="FR", offer_type="flatrate", watched=False
+            query="matrix", provider="Netflix", country="FR", offer_type="flatrate", watched=False
         )
         params = original.as_params()
 
         assert params == {
+            "query": "matrix",
             "provider": "Netflix",
             "country": "FR",
             "offer_type": "flatrate",
             "watched": "false",
         }
         assert LibraryFilter().as_params() == {}
+
+
+class TestSearch:
+    def test_matches_a_title_substring_case_insensitively(self, test_session):
+        make_film(test_session, "The Matrix")
+        make_film(test_session, "Matrix Reloaded")
+        make_film(test_session, "Casino")
+        test_session.commit()
+
+        assert sorted(listed(test_session, query="matrix")[0]) == ["Matrix Reloaded", "The Matrix"]
+
+    def test_matches_the_tmdb_title_when_it_differs(self, test_session):
+        """A film renamed on match is still found by the TMDB name."""
+        film = make_film(test_session, "Amelie")
+        film.tmdb_title = "Le Fabuleux Destin d'Amélie Poulain"
+        test_session.commit()
+
+        assert listed(test_session, query="fabuleux")[0] == ["Amelie"]
+
+    def test_no_match_is_empty(self, test_session):
+        make_film(test_session, "Heat")
+        test_session.commit()
+
+        assert listed(test_session, query="nonesuch")[0] == []
+
+    def test_search_composes_with_other_filters(self, test_session):
+        make_film(test_session, "The Matrix", watched=False, offers=[("FR", "Netflix", "flatrate")])
+        make_film(test_session, "The Matrix Revisited", watched=True)
+        test_session.commit()
+
+        # "matrix" AND unwatched -> only the first.
+        assert listed(test_session, query="matrix", watched=False)[0] == ["The Matrix"]
+
+    def test_wildcards_in_the_term_are_literal(self, test_session):
+        """A stray % must not turn into "match everything"."""
+        make_film(test_session, "Heat")
+        make_film(test_session, "50%% Off")
+        test_session.commit()
+
+        # Without escaping, "%" would match every film.
+        assert listed(test_session, query="%")[0] == ["50%% Off"]
+
+    def test_no_query_does_not_narrow(self, test_session):
+        make_film(test_session, "Heat")
+        test_session.commit()
+
+        assert listed(test_session, query=None)[0] == ["Heat"]
 
 
 class TestPaging:

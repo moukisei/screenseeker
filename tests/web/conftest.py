@@ -87,6 +87,7 @@ def make_film(
     year=1999,
     tmdb_id=603,
     rating=8.7,
+    runtime=None,
     watched=False,
     checked_days_ago=0,
     added_days_ago=0,
@@ -108,10 +109,13 @@ def make_film(
         poster_path="/poster.jpg",
         overview=f"{title} is a film.",
         vote_average=rating,
+        runtime=runtime,
         match_confidence="exact",
         date_added=now - timedelta(days=added_days_ago),
         last_checked=None if checked_days_ago is None else now - timedelta(days=checked_days_ago),
         watched=watched,
+        # Marking a film watched sets watched_at; mirror that so cards can show it.
+        watched_at=now if watched else None,
     )
     session.add(film)
     session.flush()

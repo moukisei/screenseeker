@@ -119,11 +119,14 @@ main { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
   letter-spacing: .04em;
 }
 .filters input, .filters select { min-width: 8rem; }
+.filters__search { flex: 1 1 14rem; }
+.filters__search input { width: 100%; }
 .filters__apply { align-self: flex-end; }
 .filters__clear { align-self: flex-end; padding: .45rem .2rem; color: var(--muted); font-size: .85rem; }
 
 .count { margin: 1rem 0 1.25rem; color: var(--muted); }
-input[type="text"], select, button {
+input[type="text"], input[type="search"], input[type="password"], input[type="number"],
+select, button {
   background: var(--panel);
   color: var(--text);
   border: 1px solid var(--line);
@@ -155,7 +158,53 @@ button:hover { border-color: var(--muted); }
 .job--failed .job__status { color: #f87171; }
 .job__message, .job__counts, .job__done { margin: .2rem 0; color: var(--muted); font-size: .85rem; }
 .job__refused { margin: 0 0 .5rem; color: var(--warn); font-size: .875rem; }
-.job__bar { width: 100%; height: .5rem; margin: .3rem 0; }
+.job__percent { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Themed progress bar. Determinate by default; add --indeterminate for the
+   count-unknown phase. */
+.progress {
+  position: relative;
+  width: 100%;
+  height: .55rem;
+  margin: .45rem 0 .1rem;
+  background: color-mix(in srgb, var(--line) 65%, #000);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress__fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 65%, transparent), var(--accent));
+  /* Glide toward the next polled value instead of snapping to it. */
+  transition: width .8s ease;
+}
+/* While running, a slow barber-pole so a stalled-looking bar still reads as
+   alive between updates. */
+.job--running .progress__fill {
+  background-image:
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 65%, transparent), var(--accent)),
+    repeating-linear-gradient(45deg,
+      rgba(255, 255, 255, .12) 0, rgba(255, 255, 255, .12) 8px,
+      transparent 8px, transparent 16px);
+  background-blend-mode: overlay;
+  animation: progress-stripes 1s linear infinite;
+}
+.job--succeeded .progress__fill { background: var(--accent); }
+.job--failed .progress__fill { background: #f87171; }
+
+.progress--indeterminate .progress__fill {
+  width: 35%;
+  animation: progress-sweep 1.25s ease-in-out infinite;
+}
+
+@keyframes progress-stripes { from { background-position: 0 0, 0 0; } to { background-position: 0 0, 32px 0; } }
+@keyframes progress-sweep {
+  0% { margin-left: -35%; }
+  100% { margin-left: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress__fill { animation: none; transition: none; }
+}
 .job__error {
   margin: .5rem 0 0;
   padding: .55rem .7rem;
@@ -200,7 +249,15 @@ button:hover { border-color: var(--muted); }
 }
 
 .card__body { padding: .6rem .7rem .7rem; display: flex; flex-direction: column; gap: .35rem; }
-.card__title { margin: 0; font-size: .95rem; line-height: 1.25; }
+/* Always two lines tall: a long title clamps with an ellipsis instead of
+   pushing the meta, badges and button down and breaking row alignment; a
+   short one still reserves both lines so every card lines up. */
+.card__title {
+  margin: 0; font-size: .95rem; line-height: 1.25;
+  min-height: 2.5em;
+  display: -webkit-box; -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+}
 .card__title a { text-decoration: none; }
 .card__title a:hover { text-decoration: underline; }
 .card__meta { margin: 0; color: var(--muted); font-size: .8rem; }
@@ -216,6 +273,22 @@ button:hover { border-color: var(--muted); }
 }
 .badge--yes { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 .badge--stale { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+
+/* Both pills share one row, so the ▶ mark adds no height. The row never wraps;
+   when a long provider (HBO Max) plus a big count won't fit, the mark gives up
+   width and ellipses while the offer count stays whole. */
+.card__badges { display: flex; flex-wrap: nowrap; align-items: center; gap: .35rem; min-width: 0; }
+.card__badges .badge { align-self: center; white-space: nowrap; }
+/* flex: 0 1 auto + min-width:0 is what lets the ellipsis actually engage. */
+.card__badges .badge--best { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.card__badges .badge:not(.badge--best) { flex: 0 0 auto; }
+
+/* The best-option badge is a link on a card; keep it looking like the badge. */
+a.badge--best { text-decoration: none; }
+a.badge--best:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.badge--best { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); font-weight: 600; }
+
+.card__seen { margin: 0; color: var(--muted); font-size: .75rem; }
 
 .toggle { margin: .15rem 0 0; }
 .toggle__button { width: 100%; font-size: .8rem; }

@@ -15,6 +15,7 @@ from typing import Annotated, Literal, NamedTuple, Optional, get_args
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
+from pydantic import BeforeValidator
 from sqlalchemy.orm import Session
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 
@@ -44,6 +45,45 @@ OfferType = Literal["flatrate", "rent", "buy", "free", "ads"]
 
 # Same idea for job kinds: /jobs/sync and /jobs/refresh exist, nothing else.
 JobKind = Literal["sync", "refresh"]
+
+
+def _blank_to_none(value: object) -> object:
+    """
+    A form select's "Any" option submits as an empty string, not an absent
+    field, so the grid form always sends `country=&offer_type=&watched=`. An
+    empty string fails min_length, the OfferType enum and the bool parse, so
+    without this the whole form 422s before the handler runs. Coercing blank to
+    None before typed validation makes an unset dropdown mean "no filter".
+    """
+    if isinstance(value, str) and value.strip() == "":
+        return None
+    return value
+
+
+# A blank query parameter reads as absent, not as an invalid value.
+BlankAsNone = BeforeValidator(_blank_to_none)
+
+
+def _country_code(value: object) -> object:
+    """
+    Blank means no filter; any other value must be a two-letter code.
+
+    The plain min_length/max_length guard cannot ride alongside BlankAsNone -
+    pydantic would apply it to the coerced None - so the length is enforced
+    here, still raising (a 422) on a malformed code like "FRANCE".
+    """
+    if not isinstance(value, str):
+        return value
+    code = value.strip().upper()
+    if code == "":
+        return None
+    if len(code) != 2:
+        raise ValueError("country must be a two-letter ISO code")
+    return code
+
+
+# Blank -> no filter; a present code is normalised and length-checked.
+CountryCode = BeforeValidator(_country_code)
 
 if set(get_args(JobKind)) != set(jobs.KINDS):
     raise RuntimeError(f"job kinds disagree: routes {get_args(JobKind)}, service {jobs.KINDS}")
@@ -122,13 +162,18 @@ def _strategy_context(detail: FilmDetail, strategy: WatchStrategy) -> dict:
 def index(
     request: Request,
     db: DbSession,
+    profile: Profile,
     page: int = Query(1, ge=1),
     per_page: int = Query(DEFAULT_PER_PAGE, ge=1, le=MAX_PER_PAGE),
     sort: SortKey = "added",
+    # A blank string passes max_length, so these two never needed the coercion.
+    query: Optional[str] = Query(None, max_length=100),
     provider: Optional[str] = Query(None, max_length=100),
-    country: Optional[str] = Query(None, min_length=2, max_length=2),
-    offer_type: Optional[OfferType] = None,
-    watched: Optional[bool] = None,
+    # These three reject a blank string (the length, the enum, the bool parse),
+    # so an empty select value 422s the whole form without a blank->None coerce.
+    country: Annotated[Optional[str], CountryCode] = None,
+    offer_type: Annotated[Optional[OfferType], BlankAsNone] = None,
+    watched: Annotated[Optional[bool], BlankAsNone] = None,
 ) -> HTMLResponse:
     """
     The grid: filtered, sorted, paginated, all in one query.
@@ -140,8 +185,9 @@ def index(
     """
     filters = library.LibraryFilter(
         # Blank form fields arrive as "" and must not narrow anything.
+        query=(query or "").strip() or None,
         provider=provider or None,
-        country=country.upper() if country else None,
+        country=country,
         offer_type=offer_type,
         watched=watched,
     )
@@ -163,12 +209,15 @@ def index(
         "filters": filters,
         "params": params,
         "facets": library.facets(db),
+        # The "watchable tonight" badge per card, for this page's films only.
+        "card_marks": watch.tonight_marks(db, [f.id for f in films], profile=profile),
     }
 
     if is_htmx(request):
-        # Filtering, sorting and paging swap the library alone; the jobs bar
-        # sits outside it precisely so a running job's panel survives.
-        return render(request, "partials/library.html", context)
+        # Filter/sort/page requests swap the results region only, leaving the
+        # filter form (and the search box's focus) untouched. The jobs bar sits
+        # outside #library entirely, so a running job's panel also survives.
+        return render(request, "partials/results.html", context)
 
     context["latest_job"] = jobs.latest(db)
     return render(request, "index.html", context)
@@ -205,10 +254,11 @@ def tonight_view(request: Request, db: DbSession, profile: Profile) -> HTMLRespo
     matching that SQL cannot reproduce.
     """
     picks = watch.tonight(db, profile=profile)
+    marks = watch.tonight_marks(db, [p.film.id for p in picks], profile=profile)
     return render(
         request,
         "tonight.html",
-        {"picks": picks, "base_country": profile["base_country"]},
+        {"picks": picks, "marks": marks, "base_country": profile["base_country"]},
     )
 
 
@@ -252,6 +302,7 @@ def toggle_watched(
     request: Request,
     film_id: int,
     db: DbSession,
+    profile: Profile,
     watched: bool = Form(...),
 ) -> Response:
     """
@@ -271,7 +322,10 @@ def toggle_watched(
     db.commit()
 
     if is_htmx(request):
-        return render(request, "partials/card.html", {"film": updated})
+        # Recompute the mark so the returned card keeps its "watchable tonight"
+        # badge instead of losing it until the next page load.
+        mark = watch.tonight_marks(db, [film_id], profile=profile).get(film_id)
+        return render(request, "partials/card.html", {"film": updated, "mark": mark})
 
     return RedirectResponse(url=f"/film/{film_id}", status_code=303)
 

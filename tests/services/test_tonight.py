@@ -34,6 +34,7 @@ def make_film(session, title, *, tmdb_id, rating=5.0, watched=False, offers=()):
                 provider_id=100 + i,
                 provider_name=provider,
                 monetization_type=offer_type,
+                streaming_url=f"https://example.test/{provider.lower()}/{film.id}",
                 checked_at=datetime.now(UTC),
             )
         )
@@ -146,6 +147,25 @@ class TestTonight:
 
         bare = {**PROFILE, "subscriptions": []}
         assert watch.tonight(test_session, profile=bare) == []
+
+    def test_marks_carry_the_deep_link_from_the_offer(self, test_session):
+        make_film(test_session, "Ready", tmdb_id=1, offers=[("FR", "Netflix", "flatrate")])
+        # A film with no owned base-country option gets no mark.
+        make_film(test_session, "Nope", tmdb_id=2, offers=[("US", "Netflix", "flatrate")])
+        test_session.commit()
+
+        ready = test_session.query(Film).filter(Film.letterboxd_title == "Ready").one()
+        nope = test_session.query(Film).filter(Film.letterboxd_title == "Nope").one()
+
+        marks = watch.tonight_marks(test_session, [ready.id, nope.id], profile=PROFILE)
+
+        assert nope.id not in marks
+        assert marks[ready.id].provider == "Netflix"
+        # make_film gives each offer a streaming_url; the mark surfaces it.
+        assert marks[ready.id].url and str(ready.id) in marks[ready.id].url
+
+    def test_marks_of_no_ids_is_empty(self, test_session):
+        assert watch.tonight_marks(test_session, [], profile=PROFILE) == {}
 
     def test_constant_query_count(self, test_session):
         """Candidates are narrowed in SQL, then confirmed in memory - no per-film query."""

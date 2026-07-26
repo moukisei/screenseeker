@@ -53,6 +53,64 @@ class TonightPick(NamedTuple):
     best_option: WatchOption
 
 
+class CardMark(NamedTuple):
+    """
+    The "watchable tonight" badge for one card: a provider and a way to reach it.
+
+    `url` and `logo` are the deep link and logo from the persisted offer the
+    best option came from; either can be missing, as TMDB does not supply a
+    link for every provider.
+    """
+
+    provider: str
+    url: Optional[str]
+    logo: Optional[str]
+
+
+def _mark_from(offers: list[OfferOut], best: WatchOption) -> CardMark:
+    """Pair a ranked best option with the offer row it came from, for its link."""
+    match = next(
+        (
+            o
+            for o in offers
+            if o.provider_name.casefold() == best.provider.casefold()
+            and o.country_code == best.country_code
+            and o.offer_type == best.offer_type
+        ),
+        None,
+    )
+    return CardMark(
+        provider=best.provider,
+        url=match.streaming_url if match else None,
+        logo=match.logo if match else None,
+    )
+
+
+def tonight_marks(session: Session, film_ids: list[int], *, profile: dict) -> dict[int, CardMark]:
+    """
+    The best base-country, no-VPN option per film, for the grid and Tonight.
+
+    Same computation as `tonight`, but keyed by film id and decorated with the
+    deep link, so a card can show "watchable on Netflix" and link straight to
+    it. Offers load in one query; the strategy runs in memory. Films with no
+    such option are simply absent from the result.
+    """
+    if not film_ids:
+        return {}
+
+    offers_by_film = library.offers_for_films(
+        session, film_ids, countries=reachable_countries(profile)
+    )
+
+    marks: dict[int, CardMark] = {}
+    for film_id in film_ids:
+        offers = offers_by_film.get(film_id, [])
+        best = watch_strategy_for(offers, profile).best_option
+        if best:
+            marks[film_id] = _mark_from(offers, best)
+    return marks
+
+
 def tonight(session: Session, *, profile: dict) -> list[TonightPick]:
     """
     Unwatched films with a best option in the base country, no VPN.

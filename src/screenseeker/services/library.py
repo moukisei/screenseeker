@@ -94,6 +94,9 @@ class LibraryFilter(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    # A free-text title search. Matches either the Letterboxd or the TMDB
+    # title, so a film renamed on match is still found by either name.
+    query: Optional[str] = None
     provider: Optional[str] = None
     country: Optional[str] = None
     offer_type: Optional[str] = None
@@ -112,6 +115,8 @@ class LibraryFilter(BaseModel):
         that mapping is written down.
         """
         params: dict[str, str] = {}
+        if self.query:
+            params["query"] = self.query
         if self.provider:
             params["provider"] = self.provider
         if self.country:
@@ -181,6 +186,18 @@ def _offer_predicate(filters: LibraryFilter):
 
 def _narrow(query, filters: LibraryFilter):
     """Apply every active filter. Shared by the count and the page."""
+    if filters.query:
+        # Case-insensitive substring on either title. `\`, `_` and `%` in the
+        # input are escaped so a search for them is literal, not a wildcard.
+        term = filters.query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{term}%"
+        query = query.filter(
+            or_(
+                Film.letterboxd_title.ilike(like, escape="\\"),
+                Film.tmdb_title.ilike(like, escape="\\"),
+            )
+        )
+
     if filters.watched is True:
         query = query.filter(Film.watched.is_(True))
     elif filters.watched is False:

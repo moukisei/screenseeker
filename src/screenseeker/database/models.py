@@ -55,6 +55,7 @@ class Film(Base):
     poster_path: Mapped[Optional[str]] = Column(String, nullable=True)  # TMDB path, not a full URL
     overview: Mapped[Optional[str]] = Column(Text, nullable=True)
     vote_average: Mapped[Optional[float]] = Column(Float, nullable=True)
+    runtime: Mapped[Optional[int]] = Column(Integer, nullable=True)  # Minutes; null until enriched
 
     # Match metadata
     match_confidence: Mapped[Optional[str]] = Column(

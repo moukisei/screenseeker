@@ -45,6 +45,7 @@ class TMDBMovieInfo(BaseModel):
     backdrop_path: Optional[str] = Field(None, description="TMDB backdrop path")
     vote_average: Optional[float] = Field(None, description="TMDB vote average")
     popularity: Optional[float] = Field(None, description="TMDB popularity score")
+    runtime: Optional[int] = Field(None, description="Runtime in minutes")
 
 
 class EnrichmentResult(BaseModel):

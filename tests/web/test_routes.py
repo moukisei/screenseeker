@@ -61,15 +61,19 @@ class TestGrid:
         assert client.get("/?page=0").status_code == 422
         assert client.get("/?per_page=100000").status_code == 422
 
-    def test_htmx_gets_the_fragment_not_the_page(self, client, db):
-        make_film(db)
+    def test_htmx_gets_the_results_fragment_not_the_page(self, client, db):
+        make_film(db, title="The Matrix")
 
         page = client.get("/")
         fragment = client.get("/", headers=HTMX)
 
+        # Full page carries the form and the doctype; the fragment is the
+        # results region alone, so the filter form is never re-rendered.
         assert "<!doctype html>" in page.text.lower()
         assert "<!doctype html>" not in fragment.text.lower()
-        assert 'id="library"' in fragment.text
+        assert 'class="filters"' in page.text
+        assert 'class="filters"' not in fragment.text
+        assert "The Matrix" in fragment.text
 
 
 class TestDetail:
@@ -244,6 +248,49 @@ class TestFilters:
 
         assert ">Clear<" not in client.get("/").text
 
+    def test_search_narrows_by_title(self, client, db):
+        make_film(db, title="The Matrix", tmdb_id=1)
+        make_film(db, title="Casino", tmdb_id=2)
+
+        body = client.get("/?query=matrix").text
+
+        assert "The Matrix" in body
+        assert "Casino" not in body
+        # The box keeps what was searched, so the URL and the field agree.
+        assert 'value="matrix"' in body
+
+    def test_the_form_serialises_every_empty_field_without_a_422(self, client, db):
+        # The grid form sends every control on each keystroke, so its empty
+        # selects arrive as country=&offer_type=&watched=. min_length, the enum
+        # and the bool parse each reject "", which 422'd the whole form and made
+        # the search box look dead. A blank field must read as "no filter".
+        make_film(db, title="The Matrix", tmdb_id=1)
+
+        r = client.get(
+            "/?per_page=48&query=matr&provider=&country=&offer_type=&watched=&sort=added",
+            headers={"HX-Request": "true"},
+        )
+
+        assert r.status_code == 200
+        assert "The Matrix" in r.text
+
+    def test_search_composes_with_a_filter_in_the_url(self, client, db):
+        make_film(db, title="The Matrix", tmdb_id=1, offers=[("FR", "Netflix", "flatrate")])
+        make_film(db, title="The Matrix Revisited", tmdb_id=2, watched=True)
+
+        body = client.get("/?query=matrix&watched=false").text
+
+        assert "The Matrix<" in body or "The Matrix</a>" in body
+        assert "Revisited" not in body
+
+    def test_blank_search_is_not_a_filter(self, client, db):
+        make_film(db, title="Heat", tmdb_id=1)
+
+        # A submitted-but-empty box must not read as an active filter.
+        body = client.get("/?query=").text
+        assert "Heat" in body
+        assert ">Clear<" not in body
+
     def test_pagination_links_keep_the_filters(self, client, db):
         for i in range(6):
             make_film(db, title=f"Film {i}", tmdb_id=10 + i, offers=[("FR", "Netflix", "flatrate")])
@@ -273,6 +320,48 @@ class TestFilters:
         self.stock(db)
 
         assert client.get("/?sort=confidence").status_code == 200
+
+
+class TestCardExtras:
+    def test_library_card_shows_a_deep_linked_tonight_badge(self, client, db):
+        # The default `profile` fixture is Netflix, VPN everywhere, base FR.
+        film = make_film(db, title="Watchable", tmdb_id=1, offers=[("FR", "Netflix", "flatrate")])
+
+        body = client.get("/").text
+
+        assert "▶ Netflix" in body
+        assert f"https://example.test/netflix/{film.id}" in body
+
+    def test_a_film_you_cannot_watch_tonight_has_no_badge(self, client, db):
+        make_film(db, title="Abroad", tmdb_id=1, offers=[("US", "Netflix", "flatrate")])
+
+        assert "▶" not in client.get("/").text
+
+    def test_a_watched_card_shows_when_it_was_seen(self, client, db):
+        make_film(db, title="Seen", tmdb_id=1, watched=True)
+
+        assert "watched today" in client.get("/").text
+
+    def test_a_card_shows_the_runtime_when_known(self, client, db):
+        make_film(db, title="Long", tmdb_id=1, runtime=125)
+
+        assert "2h 5m" in client.get("/").text
+
+    def test_a_card_omits_the_runtime_when_unknown(self, client, db):
+        # A film not yet enriched has no runtime; the "2h" unit never appears.
+        make_film(db, title="Fresh", tmdb_id=1, rating=None, runtime=None)
+
+        body = client.get("/").text
+        assert "Fresh" in body
+        assert "h " not in body[body.index("Fresh") : body.index("Fresh") + 100]
+
+    def test_the_toggle_fragment_keeps_the_tonight_badge(self, client, db):
+        film = make_film(db, title="Watchable", tmdb_id=1, offers=[("FR", "Netflix", "flatrate")])
+
+        # Marking watched returns the card fragment; its badge must survive.
+        body = client.post(f"/film/{film.id}/watched", data={"watched": "true"}, headers=HTMX).text
+
+        assert "▶ Netflix" in body
 
 
 class TestDetailScoping:

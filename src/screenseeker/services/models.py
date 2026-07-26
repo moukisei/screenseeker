@@ -84,6 +84,7 @@ class FilmSummary(BaseModel):
     tmdb_id: Optional[int] = None
     poster_path: Optional[str] = Field(None, description="TMDB path, not a full URL")
     vote_average: Optional[float] = None
+    runtime: Optional[int] = Field(None, description="Minutes; null until enriched")
     match_confidence: Optional[str] = None
 
     # Both years are kept so a mismatch can be shown, not just flagged.
@@ -131,6 +132,7 @@ class FilmSummary(BaseModel):
             tmdb_id=film.tmdb_id,
             poster_path=film.poster_path,
             vote_average=film.vote_average,
+            runtime=film.runtime,
             match_confidence=film.match_confidence,
             letterboxd_year=film.letterboxd_year,
             tmdb_year=film.tmdb_year,

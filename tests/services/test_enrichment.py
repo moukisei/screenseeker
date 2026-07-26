@@ -22,7 +22,7 @@ from screenseeker.services.enrichment import (
 from screenseeker.services.library import get_or_create_film
 
 
-def create_test_tmdb_movie(tmdb_id=123, title="Test Movie", year=2020):
+def create_test_tmdb_movie(tmdb_id=123, title="Test Movie", year=2020, runtime=100):
     """Helper to create a valid TMDBMovieInfo for testing."""
     return TMDBMovieInfo(
         tmdb_id=tmdb_id,
@@ -36,6 +36,7 @@ def create_test_tmdb_movie(tmdb_id=123, title="Test Movie", year=2020):
         backdrop_path=None,
         vote_average=8.5,
         popularity=100.0,
+        runtime=runtime,
     )
 
 
@@ -146,6 +147,7 @@ class TestUpdateFilmFromEnrichment:
         assert updated_film.tmdb_id == 456
         assert updated_film.tmdb_title == "New Title"
         assert updated_film.match_confidence == "exact"
+        assert updated_film.runtime == 100
 
     def test_detects_duplicate_tmdb_id(self, test_session):
         """Test that duplicate TMDB IDs are detected and handled."""

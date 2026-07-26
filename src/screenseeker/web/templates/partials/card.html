@@ -19,35 +19,52 @@
     <p class="card__meta">
       {{ film.year or '—' }}
       {%- if film.vote_average %} · ★ {{ film.vote_average|rating }}{% endif %}
+      {%- if film.runtime %} · {{ film.runtime|runtime }}{% endif %}
     </p>
 
     {#
-      Tonight passes the best option; the grid does not. It is the whole reason
-      a film is in the Tonight list, so it leads rather than sits with the
-      generic offer count below.
-    #}
-    {% if tonight_option %}
-      <p class="badge badge--yes badge--best" title="Watch tonight, no VPN">
-        ▶ {{ tonight_option.provider }}
-      </p>
-    {% endif %}
+      One row for both pills, so a card with a ▶ mark is no taller than one
+      without: the flex row holds its height whether or not the mark is there.
 
-    {#
-      Availability, as far as a grid row can know it cheaply. Which of those
+      `mark` is the best base-country, no-VPN option for this film, when it has
+      one. It links straight to the provider so the card is one click from
+      playing. The grid and Tonight both pass it; the stale view and the
+      watched-toggle fragment do not, and the block simply vanishes.
+
+      The availability pill is what a grid row can know cheaply. Which of those
       offers is on a subscription the user holds needs the offer rows joined
       against the profile - that is the Step 6 filter query, not a per-card
       lookup.
     #}
-    {% if film.last_checked is none %}
-      <p class="badge badge--unknown" title="Run screenseeker refresh">Not checked</p>
-    {% elif film.offer_count == 0 %}
-      <p class="badge badge--none" title="{{ film.cache_age_days|days }}">Nowhere to stream</p>
-    {% else %}
-      <p class="badge badge--yes{% if film.is_stale %} badge--stale{% endif %}"
-         title="{{ film.cache_age_days|days }}">
-        {{ film.offer_count }} offer{{ '' if film.offer_count == 1 else 's' }}
-        {%- if film.is_stale %} · stale{% endif %}
-      </p>
+    <div class="card__badges">
+      {% if mark %}
+        {% if mark.url %}
+          <a class="badge badge--best" href="{{ mark.url }}" target="_blank"
+             rel="noopener noreferrer" title="Watch now in your base country, no VPN">
+            ▶ {{ mark.provider }}
+          </a>
+        {% else %}
+          <span class="badge badge--best" title="On a subscription you hold, no VPN">
+            ▶ {{ mark.provider }}
+          </span>
+        {% endif %}
+      {% endif %}
+
+      {% if film.last_checked is none %}
+        <span class="badge badge--unknown" title="Run screenseeker refresh">Not checked</span>
+      {% elif film.offer_count == 0 %}
+        <span class="badge badge--none" title="{{ film.cache_age_days|days }}">Nowhere to stream</span>
+      {% else %}
+        <span class="badge badge--yes{% if film.is_stale %} badge--stale{% endif %}"
+              title="{{ film.cache_age_days|days }}">
+          {{ film.offer_count }} offer{{ '' if film.offer_count == 1 else 's' }}
+          {%- if film.is_stale %} · stale{% endif %}
+        </span>
+      {% endif %}
+    </div>
+
+    {% if film.watched and film.watched_at %}
+      <p class="card__seen">✓ watched {{ film.watched_at|ago }}</p>
     {% endif %}
 
     {#
