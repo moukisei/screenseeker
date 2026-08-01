@@ -56,10 +56,10 @@ JobKind = Literal["sync", "refresh"]
 def _blank_to_none(value: object) -> object:
     """
     A form select's "Any" option submits as an empty string, not an absent
-    field, so the grid form always sends `country=&offer_type=&watched=`. An
-    empty string fails min_length, the OfferType enum and the bool parse, so
-    without this the whole form 422s before the handler runs. Coercing blank to
-    None before typed validation makes an unset dropdown mean "no filter".
+    field, so the grid form always sends `country=&offer_type=&member_match=`.
+    An empty string fails min_length and the enums, so without this the whole
+    form 422s before the handler runs. Coercing blank to None before typed
+    validation makes an unset dropdown mean "no filter".
     """
     if isinstance(value, str) and value.strip() == "":
         return None
@@ -208,11 +208,10 @@ def index(
     # A blank string passes max_length, so these two never needed the coercion.
     query: Optional[str] = Query(None, max_length=100),
     provider: Optional[str] = Query(None, max_length=100),
-    # These three reject a blank string (the length, the enum, the bool parse),
-    # so an empty select value 422s the whole form without a blank->None coerce.
+    # These two reject a blank string (the length, the enum), so an empty
+    # select value 422s the whole form without a blank->None coerce.
     country: Annotated[Optional[str], CountryCode] = None,
     offer_type: Annotated[Optional[OfferType], BlankAsNone] = None,
-    watched: Annotated[Optional[bool], BlankAsNone] = None,
     # Repeatable, so it is declared through Annotated rather than as a default
     # `Query(...)` call - a list default is what B008 exists to catch.
     members: Annotated[Optional[list[str]], Query()] = None,
@@ -221,8 +220,8 @@ def index(
     """
     The grid: filtered, sorted, paginated, all in one query.
 
-    Every filter is a query parameter, so "unwatched, on Netflix, available in
-    FR, wanted by Alice and Bob" is a URL you can bookmark and share. HTMX asks
+    Every filter is a query parameter, so "on Netflix, available in FR, wanted
+    by Alice and Bob" is a URL you can bookmark and share. HTMX asks
     for the library block alone; a plain request gets the page, which is why
     every control also carries a real href.
     """
@@ -232,7 +231,6 @@ def index(
         provider=provider or None,
         country=country,
         offer_type=offer_type,
-        watched=watched,
         members=_member_ids(members),
         member_match=member_match or "any",
     )
@@ -298,7 +296,7 @@ def film_detail(
 @router.get("/tonight", response_class=HTMLResponse)
 def tonight_view(request: Request, db: DbSession, profile: Profile) -> HTMLResponse:
     """
-    What to watch tonight: unwatched, in the base country, no VPN.
+    What to watch tonight: in the base country, no VPN, most wanted first.
 
     The actual product. Computed through the watch strategy rather than a SQL
     filter, because best_option depends on fuzzy, bundle-aware provider
@@ -348,53 +346,6 @@ def stale_view(
             "household_size": member_service.count_members(db),
         },
     )
-
-
-@router.post(
-    "/film/{film_id}/watched",
-    response_class=HTMLResponse,
-    dependencies=[Depends(require_user)],
-)
-def toggle_watched(
-    request: Request,
-    film_id: int,
-    db: DbSession,
-    profile: Profile,
-    watched: bool = Form(...),
-) -> Response:
-    """
-    Set the watched flag and return the updated card.
-
-    POST rather than GET even though HTMX would happily fire `hx-get`: a GET
-    that mutates is CSRF-exploitable the moment cookie auth exists.
-
-    The desired state is submitted rather than inferred, so a double-submitted
-    form lands on the same value instead of flipping twice. Without HTMX the
-    response is a redirect, which keeps the detail page's form working.
-    """
-    updated = library.set_watched_by_id(db, film_id, watched=watched)
-    if updated is None:
-        raise HTTPException(status_code=404, detail="That film is not in your library.")
-
-    db.commit()
-
-    if is_htmx(request):
-        # Recompute the mark so the returned card keeps its "watchable tonight"
-        # badge instead of losing it until the next page load.
-        mark = watch.tonight_marks(db, [film_id], profile=profile).get(film_id)
-        return render(
-            request,
-            "partials/card.html",
-            {
-                "film": updated,
-                "mark": mark,
-                # Without this the card comes back stripped of its chips, so
-                # marking a film watched would look like it lost its owners.
-                "household_size": member_service.count_members(db),
-            },
-        )
-
-    return RedirectResponse(url=f"/film/{film_id}", status_code=303)
 
 
 # ==============================================================================

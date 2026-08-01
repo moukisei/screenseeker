@@ -47,13 +47,6 @@
       {% if film.overview %}<p class="detail__overview">{{ film.overview }}</p>{% endif %}
 
       <p class="detail__checked">{{ film.cache_age_days|days }}{% if film.is_stale %} · stale{% endif %}</p>
-
-      <form class="toggle" method="post" action="/film/{{ film.id }}/watched">
-        <input type="hidden" name="watched" value="{{ 'false' if film.watched else 'true' }}">
-        <button type="submit" class="toggle__button">
-          {{ 'Watched — mark unwatched' if film.watched else 'Mark watched' }}
-        </button>
-      </form>
     </div>
   </div>
 

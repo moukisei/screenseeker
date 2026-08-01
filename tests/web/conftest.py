@@ -16,6 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from screenseeker.database.models import Base, Film, StreamingOffer
 from screenseeker.web.app import create_app
 from screenseeker.web.deps import get_db, get_profile
+from tests.conftest import own
 
 
 @pytest.fixture
@@ -88,16 +89,19 @@ def make_film(
     tmdb_id=603,
     rating=8.7,
     runtime=None,
-    watched=False,
     checked_days_ago=0,
     added_days_ago=0,
     offers=(),
+    owners=None,
 ):
     """
     Insert a film. `offers` is a list of (country, provider, offer_type).
 
     checked_days_ago=None leaves last_checked unset, which is how a film that
     sync added but refresh has never seen looks.
+
+    `owners` defaults to a stand-in member: a film nobody lists is not in the
+    library, so no route returns it. Pass `owners=()` for that case.
     """
     now = datetime.now(UTC)
     film = Film(
@@ -113,9 +117,6 @@ def make_film(
         match_confidence="exact",
         date_added=now - timedelta(days=added_days_ago),
         last_checked=None if checked_days_ago is None else now - timedelta(days=checked_days_ago),
-        watched=watched,
-        # Marking a film watched sets watched_at; mirror that so cards can show it.
-        watched_at=now if watched else None,
     )
     session.add(film)
     session.flush()
@@ -135,5 +136,6 @@ def make_film(
             )
         )
 
+    own(session, film, owners)
     session.commit()
     return film

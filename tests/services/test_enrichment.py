@@ -17,9 +17,15 @@ from screenseeker.services.enrichment import (
     enrich_and_save_film,
     needs_refresh,
     save_streaming_offers,
+    select_stale,
+    stale_films,
     update_film_from_enrichment,
 )
-from screenseeker.services.library import get_or_create_film, record_entry
+from screenseeker.services.library import (
+    get_or_create_film,
+    record_entry,
+    retire_missing_entries,
+)
 from screenseeker.services.members import create_member
 
 
@@ -329,3 +335,33 @@ class TestSaveStreamingOffers:
 
         offers = offers_for(test_session, film.id)
         assert len(offers) == 2
+
+
+class TestStaleSelection:
+    def test_a_film_nobody_lists_is_not_refreshed(self, test_session):
+        """
+        Refresh is the rate-limited half of the app. Fetching availability for
+        a film the household has dropped spends that budget on an answer no
+        page will ever show, and the nightly job would pay it every night.
+        """
+        alice = create_member(test_session, "alice")
+
+        kept, _ = get_or_create_film(test_session, "Kept", 1999)
+        dropped, _ = get_or_create_film(test_session, "Dropped", 1999)
+        record_entry(test_session, alice.id, kept)
+        record_entry(test_session, alice.id, dropped)
+        retire_missing_entries(test_session, alice.id, {kept.id})
+        test_session.commit()
+
+        assert [f.letterboxd_title for f in stale_films(test_session)] == ["Kept"]
+
+    def test_a_film_someone_still_lists_is_refreshed(self, test_session):
+        alice = create_member(test_session, "alice")
+        film, _ = get_or_create_film(test_session, "Kept", 1999)
+        record_entry(test_session, alice.id, film)
+        test_session.commit()
+
+        selection, total = select_stale(test_session)
+
+        assert [f.title for f in selection] == ["Kept"]
+        assert total == 1

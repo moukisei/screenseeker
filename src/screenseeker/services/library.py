@@ -15,7 +15,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import case, distinct, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from .. import settings
 from ..database.models import Film, Member, StreamingOffer, WatchlistEntry
@@ -234,9 +234,13 @@ class LibraryFilter(BaseModel):
 
     Every field is optional and they compose. Combining them is what the CLI
     structurally could not do.
+
+    `extra="forbid"` so a filter that no longer exists fails loudly. Pydantic's
+    default is to ignore unknown keys, which meant a caller still passing the
+    removed `watched=` kept working and quietly filtered nothing.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     # A free-text title search. Matches either the Letterboxd or the TMDB
     # title, so a film renamed on match is still found by either name.
@@ -244,7 +248,6 @@ class LibraryFilter(BaseModel):
     provider: Optional[str] = None
     country: Optional[str] = None
     offer_type: Optional[str] = None
-    watched: Optional[bool] = None
 
     # Whose watchlists to draw from. A tuple because the model is frozen and
     # a list would make it unhashable. Empty means everyone.
@@ -291,8 +294,6 @@ class LibraryFilter(BaseModel):
             params["country"] = self.country
         if self.offer_type:
             params["offer_type"] = self.offer_type
-        if self.watched is not None:
-            params["watched"] = "true" if self.watched else "false"
         if self.members:
             params["members"] = ",".join(str(m) for m in self.members)
             # Only meaningful alongside a selection, and "any" is the default.
@@ -346,7 +347,7 @@ def _offer_predicate(filters: LibraryFilter):
 
     All three conditions must hold for the *same* offer row. Three independent
     EXISTS clauses would match a film that streams on Netflix in the US and
-    happens to be rentable in France on "unwatched, Netflix, FR" - which is
+    happens to be rentable in France on "Netflix, FR, flatrate" - which is
     the wrong answer to the only question this app asks.
 
     EXISTS rather than a JOIN because a join multiplies rows, and DISTINCT to
@@ -396,8 +397,29 @@ def _member_predicate(filters: LibraryFilter):
     return select(WatchlistEntry.id).where(*live, WatchlistEntry.member_id.in_(ids)).exists()
 
 
+# Somebody, right now, has this film on their watchlist.
+#
+# This is the library's definition of membership, not a filter the user picks:
+# a film everyone has dropped is not in the library any more. Logging a film on
+# Letterboxd takes it off the watchlist, which is what makes this the only
+# "watched" signal the app needs - there is no flag here to keep in sync with
+# the diary, and nothing to click twice.
+#
+# The row is kept rather than deleted (see WatchlistEntry.removed_at), so a
+# half-read scrape is recoverable and a re-added film comes back with its
+# original date. It is simply invisible until someone wants it again.
+IS_WANTED = (
+    select(WatchlistEntry.id)
+    .where(WatchlistEntry.film_id == Film.id, WatchlistEntry.removed_at.is_(None))
+    .exists()
+)
+
+
 def _narrow(query, filters: LibraryFilter):
     """Apply every active filter. Shared by the count and the page."""
+    # Unconditional: films nobody lists are not part of the library.
+    query = query.filter(IS_WANTED)
+
     if filters.query:
         # Case-insensitive substring on either title. `\`, `_` and `%` in the
         # input are escaped so a search for them is literal, not a wildcard.
@@ -409,12 +431,6 @@ def _narrow(query, filters: LibraryFilter):
                 Film.tmdb_title.ilike(like, escape="\\"),
             )
         )
-
-    if filters.watched is True:
-        query = query.filter(Film.watched.is_(True))
-    elif filters.watched is False:
-        # Legacy rows could carry NULL rather than 0; both mean unwatched.
-        query = query.filter(or_(Film.watched.is_(False), Film.watched.is_(None)))
 
     predicate = _offer_predicate(filters)
     if predicate is not None:
@@ -477,7 +493,8 @@ def list_films(
     """
     One page of the library, filtered, ordered and sliced in SQL.
 
-    Returns (page, total_matching). "unwatched, on Netflix, available in FR"
+    Returns (page, total_matching). "on Netflix, available in FR, wanted by
+    Alice"
     is one call and one query over films.
     """
     filters = filters or LibraryFilter()
@@ -508,20 +525,35 @@ class Facets(BaseModel):
     offer_types: list[str] = []
 
 
+def _facet_values(session: Session, column: InstrumentedAttribute[str]) -> list[str]:
+    """
+    Distinct values of one offer column, across films someone still wants.
+
+    Scoped to wanted films because the alternative is a dropdown offering a
+    provider that only ever appears on films nobody has listed for months -
+    pick it and the grid comes back empty with no way to tell why.
+
+    `column` is annotated rather than left bare: with an implicit Any, mypy
+    cannot solve the type variable on `distinct()` and gives up on the row
+    type, which surfaces as "Need type annotation" on the comprehension.
+    """
+    wanted = select(Film.id).where(Film.id == StreamingOffer.film_id, IS_WANTED).exists()
+    rows = session.query(distinct(column)).filter(wanted).all()
+    return sorted(row[0] for row in rows)
+
+
 def facets(session: Session) -> Facets:
     """
-    Distinct providers, countries and offer types across every stored offer.
+    The values a filter can usefully take.
 
     Three cheap queries against indexed columns. Deliberately not filtered by
-    the current selection: a dropdown that hides the option you need because
+    the current *selection*: a dropdown that hides the option you need because
     of the option you already picked is worse than one that returns nothing.
     """
     return Facets(
-        providers=sorted(r[0] for r in session.query(distinct(StreamingOffer.provider_name)).all()),
-        countries=sorted(r[0] for r in session.query(distinct(StreamingOffer.country_code)).all()),
-        offer_types=sorted(
-            r[0] for r in session.query(distinct(StreamingOffer.monetization_type)).all()
-        ),
+        providers=_facet_values(session, StreamingOffer.provider_name),
+        countries=_facet_values(session, StreamingOffer.country_code),
+        offer_types=_facet_values(session, StreamingOffer.monetization_type),
     )
 
 
@@ -542,7 +574,9 @@ def get_detail(
     every render for no information. The unscoped total is still reported, so
     the page can say it is showing a subset.
     """
-    film = session.query(Film).filter(Film.id == film_id).first()
+    # IS_WANTED here too, so a bookmark to a film the household has since
+    # dropped 404s rather than rendering a page unreachable from anywhere else.
+    film = session.query(Film).filter(Film.id == film_id, IS_WANTED).first()
     if not film:
         return None
 
@@ -591,15 +625,18 @@ def list_stale(
 
     A never-checked film is stale, not fresh, so it sorts before everything
     with a date. Ordered so the refresh queue reads worst-first.
+
+    Films nobody lists are excluded: refreshing them spends the TMDB rate limit
+    on availability for films the household will never be shown.
     """
     cutoff = datetime.now(UTC) - timedelta(days=days)
     stale = or_(Film.last_checked.is_(None), Film.last_checked < cutoff)
 
-    total = session.query(func.count(Film.id)).filter(stale).scalar() or 0
+    total = session.query(func.count(Film.id)).filter(stale, IS_WANTED).scalar() or 0
 
     films = (
         session.query(Film)
-        .filter(stale)
+        .filter(stale, IS_WANTED)
         # NULLs first: never-checked is the most stale. Then oldest check.
         .order_by(Film.last_checked.is_(None).desc(), Film.last_checked.asc(), Film.id.asc())
         .limit(per_page)
@@ -608,53 +645,3 @@ def list_stale(
     )
 
     return _summarise(session, films), total
-
-
-def set_watched_by_id(
-    session: Session, film_id: int, watched: bool = True
-) -> Optional[FilmSummary]:
-    """Mark a film watched or unwatched by primary key."""
-    film = session.query(Film).filter(Film.id == film_id).first()
-    if not film:
-        return None
-
-    film.watched = watched
-    film.watched_at = datetime.now(UTC) if watched else None
-    session.flush()
-
-    logger.info(f"Marked '{film.full_title}' as {'watched' if watched else 'unwatched'}")
-
-    counts = offer_counts(session, [film.id])
-    return FilmSummary.from_film(
-        film,
-        offer_count=counts.get(film.id, 0),
-        # The response replaces the whole card, so without this the chips
-        # disappear the moment anyone marks a film watched.
-        members=wanted_by(session, [film.id]).get(film.id, []),
-    )
-
-
-def stats(session: Session) -> dict:
-    """Aggregate counts for the stats view."""
-    total_films = session.query(func.count(Film.id)).scalar() or 0
-    watched_films = session.query(func.count(Film.id)).filter(Film.watched.is_(True)).scalar() or 0
-    films_with_tmdb = (
-        session.query(func.count(Film.id)).filter(Film.tmdb_id.isnot(None)).scalar() or 0
-    )
-
-    return {
-        "total_films": total_films,
-        "watched_films": watched_films,
-        "unwatched_films": total_films - watched_films,
-        "films_with_tmdb": films_with_tmdb,
-        "match_rate": round(films_with_tmdb / total_films * 100, 1) if total_films else 0,
-        "total_offers": session.query(func.count(StreamingOffer.id)).scalar() or 0,
-        "unique_providers": session.query(
-            func.count(distinct(StreamingOffer.provider_name))
-        ).scalar()
-        or 0,
-        "unique_countries": session.query(
-            func.count(distinct(StreamingOffer.country_code))
-        ).scalar()
-        or 0,
-    }

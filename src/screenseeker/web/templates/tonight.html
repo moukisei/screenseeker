@@ -6,7 +6,8 @@
 <section class="tonight">
   <h1>Tonight</h1>
   <p class="tonight__lede">
-    Unwatched, streaming in {{ base_country }} on something you already pay for — no VPN.
+    Streaming in {{ base_country }} on something you already pay for — no VPN.
+    Most wanted first: what the most of you have on your watchlists.
   </p>
 
   {% if picks %}
@@ -23,7 +24,7 @@
   {% else %}
     <p class="empty">
       Nothing to watch tonight on your current subscriptions.
-      Either everything unwatched is unavailable in {{ base_country }}, or your
+      Either nothing on your watchlists is available in {{ base_country }}, or your
       <a href="/profile">profile</a> has no subscriptions yet. A
       <a href="/stale">refresh</a> may also be overdue.
     </p>

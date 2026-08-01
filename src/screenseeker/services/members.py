@@ -137,8 +137,8 @@ def count_members(session: Session) -> int:
     How many people are in the household.
 
     One COUNT rather than len(list_members()): the card partial needs this on
-    every page that renders a grid, including the watched-toggle fragment,
-    and it only ever asks whether the number is above one.
+    every page that renders a grid, and it only ever asks whether the number
+    is above one.
     """
     return int(session.query(func.count(Member.id)).scalar() or 0)
 

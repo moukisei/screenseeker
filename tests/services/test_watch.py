@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 
 from screenseeker.database.models import Film, StreamingOffer
 from screenseeker.services.watch import find_watch_options, watch_strategy_for
+from tests.conftest import own
 
 PROFILE = {
     "base_country": "FR",
@@ -20,7 +21,7 @@ PROFILE = {
 }
 
 
-def make_film(session, *, title="The Matrix", year=1999, tmdb_id=603, offers=()):
+def make_film(session, *, title="The Matrix", year=1999, tmdb_id=603, offers=(), owners=None):
     film = Film(
         letterboxd_title=title,
         letterboxd_year=year,
@@ -48,7 +49,7 @@ def make_film(session, *, title="The Matrix", year=1999, tmdb_id=603, offers=())
             )
         )
     session.flush()
-    return film
+    return own(session, film, owners)
 
 
 class TestFindWatchOptions:

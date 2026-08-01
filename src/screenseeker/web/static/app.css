@@ -236,7 +236,6 @@ button:hover { border-color: var(--muted); }
   display: flex;
   flex-direction: column;
 }
-.card--watched { opacity: .55; }
 
 .card__poster {
   display: block;
@@ -290,10 +289,7 @@ a.badge--best { text-decoration: none; }
 a.badge--best:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .badge--best { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); font-weight: 600; }
 
-.card__seen { margin: 0; color: var(--muted); font-size: .75rem; }
 
-.toggle { margin: .15rem 0 0; }
-.toggle__button { width: 100%; font-size: .8rem; }
 
 /* --- Pagination --------------------------------------------------------- */
 

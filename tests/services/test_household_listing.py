@@ -15,7 +15,13 @@ from screenseeker.services import library
 from screenseeker.services.library import LibraryFilter
 from screenseeker.services.members import create_member
 
-from .test_listing import make_film, titles
+from .test_listing import make_film as _make_film
+from .test_listing import titles
+
+
+def make_film(session, title, **kwargs):
+    """A film nobody lists yet; these tests assign owners through `want`."""
+    return _make_film(session, title, owners=(), **kwargs)
 
 
 def want(session, member, film, *, removed=False):
@@ -106,14 +112,15 @@ class TestMemberFilter:
 
     def test_no_selection_shows_everyone(self, test_session):
         alice = create_member(test_session, "alice")
+        bob = create_member(test_session, "bob")
         want(test_session, alice, make_film(test_session, "Solaris"))
-        make_film(test_session, "Orphan")
+        want(test_session, bob, make_film(test_session, "Heat"))
         test_session.commit()
 
         found, total = listed(test_session)
 
         assert total == 2
-        assert sorted(found) == ["Orphan", "Solaris"]
+        assert sorted(found) == ["Heat", "Solaris"]
 
     def test_composes_with_the_offer_filters(self, test_session):
         alice = create_member(test_session, "alice")
@@ -164,16 +171,19 @@ class TestMostWantedSort:
 
         assert titles(films) == ["Better", "Worse"]
 
-    def test_a_film_nobody_lists_sorts_last(self, test_session):
+    def test_a_film_nobody_lists_does_not_appear_at_all(self, test_session):
+        """
+        Not "sorts last" - gone. A film everyone has dropped is not part of
+        the library, so it cannot sit at the bottom of a ranking either.
+        """
         alice = create_member(test_session, "alice")
-        wanted = make_film(test_session, "Wanted", rating=1.0)
-        want(test_session, alice, wanted)
+        want(test_session, alice, make_film(test_session, "Wanted", rating=1.0))
         make_film(test_session, "Orphan", rating=9.0)
         test_session.commit()
 
         films, _ = library.list_films(test_session, sort="wanted")
 
-        assert titles(films) == ["Wanted", "Orphan"]
+        assert titles(films) == ["Wanted"]
 
 
 class TestChips:
@@ -206,15 +216,22 @@ class TestChips:
 
         assert [m.display_name for m in summary.members] == ["Adam", "Zoe"]
 
-    def test_a_retired_entry_leaves_no_chip(self, test_session):
+    def test_a_retired_entry_leaves_no_chip_and_no_card(self, test_session):
+        """
+        A retired entry is the only entry, so the film leaves the library. The
+        chip and the card go together - there is no such thing as a card with
+        no chips once the household has more than nobody in it.
+        """
         alice = create_member(test_session, "alice")
+        bob = create_member(test_session, "bob")
         film = make_film(test_session, "Casino")
         want(test_session, alice, film, removed=True)
+        want(test_session, bob, film)
         test_session.commit()
 
         [summary], _ = library.list_films(test_session)
 
-        assert summary.members == []
+        assert [m.display_name for m in summary.members] == ["bob"]
 
     def test_chips_cost_one_query_for_a_whole_page(self, test_session):
         """
@@ -229,7 +246,10 @@ class TestChips:
         statements = []
 
         def record(conn, cursor, statement, params, context, executemany):
-            if "watchlist_entries" in statement:
+            # The count and the page both carry the "somebody wants this"
+            # EXISTS; only the chip load joins members, which is the one this
+            # is about.
+            if "watchlist_entries" in statement and "members" in statement:
                 statements.append(statement)
 
         engine = test_session.get_bind()
@@ -241,20 +261,6 @@ class TestChips:
 
         assert len(films) == 20
         assert len(statements) == 1, f"got {len(statements)} entry queries"
-
-    def test_the_watched_toggle_keeps_the_chips(self, test_session):
-        """
-        The response replaces the whole card, so dropping them here would look
-        like marking a film watched had lost its owners.
-        """
-        alice = create_member(test_session, "alice", display_name="Alice")
-        film = make_film(test_session, "Casino")
-        want(test_session, alice, film)
-        test_session.commit()
-
-        updated = library.set_watched_by_id(test_session, film.id, watched=True)
-
-        assert [m.display_name for m in updated.members] == ["Alice"]
 
 
 class TestDetail:
@@ -290,3 +296,95 @@ class TestFilterParams:
         """Otherwise an untouched dropdown lights up the Clear link."""
         assert LibraryFilter(member_match="all").is_active is False
         assert LibraryFilter(members=(1,)).is_active is True
+
+
+class TestDroppedFilmsLeave:
+    """
+    The library is what is on somebody's watchlist right now.
+
+    Logging a film on Letterboxd takes it off the watchlist there, so the next
+    sync retires the entry and the film has to leave every view here. Without
+    that the grid silently accumulates films nobody wants and nothing can tell
+    them apart from the rest.
+    """
+
+    def test_the_grid_drops_it(self, test_session):
+        alice = create_member(test_session, "alice")
+        kept = make_film(test_session, "Kept")
+        dropped = make_film(test_session, "Dropped")
+        want(test_session, alice, kept)
+        want(test_session, alice, dropped, removed=True)
+        test_session.commit()
+
+        found, total = listed(test_session)
+
+        assert found == ["Kept"]
+        assert total == 1
+
+    def test_the_detail_page_404s(self, test_session):
+        """A bookmark to a dropped film must not outlive the film."""
+        alice = create_member(test_session, "alice")
+        dropped = make_film(test_session, "Dropped")
+        want(test_session, alice, dropped, removed=True)
+        test_session.commit()
+
+        assert library.get_detail(test_session, dropped.id) is None
+
+    def test_the_stale_queue_skips_it(self, test_session):
+        """
+        Refreshing a dropped film spends the TMDB rate limit on availability
+        nobody will ever be shown - and the nightly job would pay it forever.
+        """
+        alice = create_member(test_session, "alice")
+        kept = make_film(test_session, "Kept")
+        dropped = make_film(test_session, "Dropped")
+        want(test_session, alice, kept)
+        want(test_session, alice, dropped, removed=True)
+        test_session.commit()
+
+        films, total = library.list_stale(test_session)
+
+        assert [f.title for f in films] == ["Kept"]
+        assert total == 1
+
+    def test_the_facets_forget_its_providers(self, test_session):
+        """
+        A dropdown offering a provider that only a dropped film ever had gives
+        an empty grid and no way to tell why.
+        """
+        alice = create_member(test_session, "alice")
+        kept = make_film(test_session, "Kept", offers=[("FR", "Netflix", "flatrate")])
+        dropped = make_film(test_session, "Dropped", offers=[("JP", "Mubi", "rent")])
+        want(test_session, alice, kept)
+        want(test_session, alice, dropped, removed=True)
+        test_session.commit()
+
+        facets = library.facets(test_session)
+
+        assert facets.providers == ["Netflix"]
+        assert facets.countries == ["FR"]
+        assert facets.offer_types == ["flatrate"]
+
+    def test_re_adding_brings_it_back(self, test_session):
+        """Soft delete, so the film returns rather than being re-enriched."""
+        alice = create_member(test_session, "alice")
+        film = make_film(test_session, "Second Thoughts")
+        want(test_session, alice, film, removed=True)
+        test_session.commit()
+
+        assert listed(test_session)[0] == []
+
+        library.record_entry(test_session, alice.id, film)
+        test_session.commit()
+
+        assert listed(test_session)[0] == ["Second Thoughts"]
+
+    def test_one_member_dropping_it_is_not_enough(self, test_session):
+        alice = create_member(test_session, "alice")
+        bob = create_member(test_session, "bob")
+        film = make_film(test_session, "Still Wanted")
+        want(test_session, alice, film, removed=True)
+        want(test_session, bob, film)
+        test_session.commit()
+
+        assert listed(test_session)[0] == ["Still Wanted"]

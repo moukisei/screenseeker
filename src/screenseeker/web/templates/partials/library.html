@@ -87,15 +87,6 @@
     {% endif %}
 
     <label>
-      Watched
-      <select name="watched">
-        <option value="">Any</option>
-        <option value="false" {% if filters.watched is false %}selected{% endif %}>Unwatched</option>
-        <option value="true" {% if filters.watched is true %}selected{% endif %}>Watched</option>
-      </select>
-    </label>
-
-    <label>
       Sort by
       <select name="sort">
         {% for key, label in sort_labels.items() %}

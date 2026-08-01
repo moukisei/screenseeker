@@ -10,7 +10,13 @@ than one person to tell apart.
 from screenseeker.database.models import Film, Member
 from screenseeker.services.library import record_entry
 from screenseeker.services.members import create_member
-from tests.web.conftest import make_film
+from tests.web.conftest import make_film as _make_film
+
+
+def make_film(db, **kwargs):
+    """A film nobody lists yet; these tests assign owners through `add_member`."""
+    return _make_film(db, owners=(), **kwargs)
+
 
 HTMX = {"HX-Request": "true"}
 
@@ -205,12 +211,12 @@ class TestChips:
 
         assert "Wanted by" not in response.text
 
-    def test_the_watched_toggle_returns_a_card_with_its_chips(self, client, db):
-        film = make_film(db, title="Casino", tmdb_id=1)
+    def test_tonight_carries_the_chips_too(self, client, db):
+        film = make_film(db, title="Casino", tmdb_id=1, offers=[("FR", "Netflix", "flatrate")])
         add_member(db, "alice", "Alice", films=[film])
         add_member(db, "bob", "Bob", films=[film])
 
-        response = client.post(f"/film/{film.id}/watched", data={"watched": "true"}, headers=HTMX)
+        response = client.get("/tonight")
 
         assert response.status_code == 200
         assert "Wanted by Alice, Bob" in response.text

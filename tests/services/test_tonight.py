@@ -11,15 +11,17 @@ from datetime import UTC, datetime
 
 from screenseeker.database.models import Film, StreamingOffer
 from screenseeker.services import watch
+from screenseeker.services.library import record_entry
+from screenseeker.services.members import create_member, get_by_username
+from tests.conftest import own
 
 
-def make_film(session, title, *, tmdb_id, rating=5.0, watched=False, offers=()):
+def make_film(session, title, *, tmdb_id, rating=5.0, offers=(), owners=None):
     film = Film(
         letterboxd_title=title,
         letterboxd_year=2000,
         tmdb_id=tmdb_id,
         vote_average=rating,
-        watched=watched,
         date_added=datetime.now(UTC),
         last_checked=datetime.now(UTC),
     )
@@ -39,7 +41,7 @@ def make_film(session, title, *, tmdb_id, rating=5.0, watched=False, offers=()):
             )
         )
     session.flush()
-    return film
+    return own(session, film, owners)
 
 
 PROFILE = {
@@ -73,9 +75,14 @@ class TestTonight:
         assert picks[0].best_option.provider == "Netflix"
         assert picks[0].best_option.vpn_required is False
 
-    def test_watched_films_are_excluded(self, test_session):
+    def test_a_film_nobody_lists_is_excluded(self, test_session):
+        """
+        How a watched film leaves Tonight now: logging it on Letterboxd takes
+        it off the watchlist, the sync retires the entry, and it is gone. There
+        is no flag to set here.
+        """
         make_film(
-            test_session, "Seen", tmdb_id=1, watched=True, offers=[("FR", "Netflix", "flatrate")]
+            test_session, "Dropped", tmdb_id=1, owners=(), offers=[("FR", "Netflix", "flatrate")]
         )
         test_session.commit()
 
@@ -191,3 +198,48 @@ class TestTonight:
         # Candidate films, their offers, the offer counts, the member chips.
         # Not one per film.
         assert len(statements) <= 5, f"got {len(statements)} queries"
+
+
+class TestConsensusOrdering:
+    """
+    Most wanted first. The reason to pool four watchlists is that what three
+    of you want beats what one of you wants and TMDB rates more highly.
+    """
+
+    def make_wanted(self, session, title, tmdb_id, *, rating, owners):
+        """A watchable film, wanted by the named members."""
+        film = make_film(
+            session,
+            title,
+            tmdb_id=tmdb_id,
+            rating=rating,
+            owners=(),
+            offers=[("FR", "Netflix", "flatrate")],
+        )
+        for username in owners:
+            member = get_by_username(session, username) or create_member(session, username)
+            record_entry(session, member.id, film)
+        session.flush()
+        return film
+
+    def test_more_owners_outranks_a_better_rating(self, test_session):
+        self.make_wanted(test_session, "Beloved", 1, rating=9.9, owners=["alice"])
+        self.make_wanted(test_session, "Agreed", 2, rating=4.0, owners=["alice", "bob"])
+        test_session.commit()
+
+        assert picked_titles(test_session) == ["Agreed", "Beloved"]
+
+    def test_rating_breaks_a_tie(self, test_session):
+        self.make_wanted(test_session, "Worse", 1, rating=3.0, owners=["alice"])
+        self.make_wanted(test_session, "Better", 2, rating=8.0, owners=["alice"])
+        test_session.commit()
+
+        assert picked_titles(test_session) == ["Better", "Worse"]
+
+    def test_an_unrated_film_sorts_below_a_rated_one_at_the_same_count(self, test_session):
+        self.make_wanted(test_session, "Rated", 1, rating=2.0, owners=["alice"])
+        unrated = self.make_wanted(test_session, "Unrated", 2, rating=5.0, owners=["alice"])
+        unrated.vote_average = None
+        test_session.commit()
+
+        assert picked_titles(test_session) == ["Rated", "Unrated"]

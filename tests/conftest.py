@@ -79,3 +79,42 @@ def test_session(test_db_engine):
     finally:
         session.rollback()
         session.close()
+
+
+def own(session, film, owners=None):
+    """
+    Put a film on a watchlist so the library will actually return it.
+
+    Films nobody lists are not in the library at all, so a test film with no
+    entry is invisible to every query - almost never what a test means. The
+    `make_film` helpers call this for you.
+
+    `owners=None` attaches a single stand-in member, created once per database.
+    `owners=()` attaches nobody, which is how a test asks for a film the
+    household has dropped.
+    """
+    from datetime import UTC, datetime
+
+    from screenseeker.database.models import WatchlistEntry
+
+    if owners is None:
+        owners = [_stand_in_member(session)]
+
+    for member in owners:
+        session.add(
+            WatchlistEntry(member_id=member.id, film_id=film.id, date_added=datetime.now(UTC))
+        )
+    session.flush()
+    return film
+
+
+def _stand_in_member(session):
+    """The one member test films belong to when a test does not care who."""
+    from screenseeker.database.models import Member
+
+    member = session.query(Member).filter(Member.letterboxd_username == "tester").first()
+    if member is None:
+        member = Member(letterboxd_username="tester", display_name="Tester", active=True)
+        session.add(member)
+        session.flush()
+    return member

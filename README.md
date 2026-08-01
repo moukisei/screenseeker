@@ -39,13 +39,15 @@ so the grid is instant. Only `sync` and `refresh` reach out.
 Start it with `screenseeker serve` and open `http://127.0.0.1:8000`. The pages:
 
 - **Library** (`/`) — the whole household's watchlist as a poster grid. Filter
-  by provider, country, offer type, watched state and **whose list it is on**
-  (any of them, or all of them), sort, and search by title as you type. Every
-  filter is a query parameter, so any view is a bookmarkable URL. Each card
-  shows year, rating, runtime, a chip per person who wants it, a "watchable
-  tonight" badge when one applies, and a one-click **Mark watched** toggle.
-- **Tonight** (`/tonight`) — only the films you can watch right now: unwatched,
-  in your base country, no VPN. The actual product.
+  by provider, country, offer type and **whose list it is on** (any of them, or
+  all of them), sort, and search by title as you type. Every filter is a query
+  parameter, so any view is a bookmarkable URL. Each card shows year, rating,
+  runtime, a chip per person who wants it, and a "watchable tonight" badge when
+  one applies.
+- **Tonight** (`/tonight`) — the films you can start right now: streaming in
+  your base country, no VPN, on a subscription you already pay for, **most
+  wanted first**. Free and ad-supported offers are deliberately not here; they
+  are reachable from the Library filter and each film's page.
 - **Stale** (`/stale`) — films whose streaming data has aged past the cache TTL,
   with a button to refresh them.
 - **Profile** (`/profile`) — manage the household (add, rename, recolour, pause
@@ -144,9 +146,14 @@ That has a few consequences worth knowing:
 - **A scrape that returns nothing changes nothing.** A rate limit or a login
   wall reads as "your watchlist is empty", so entries stand until a scrape that
   actually read something disagrees with them.
-- **`watched` is household-level.** One television, one "we have seen this".
-  Per-person viewing history is Letterboxd's diary, deliberately not duplicated
-  here.
+- **There is no "watched" button.** Logging a film on Letterboxd takes it off
+  your watchlist there, so the next sync retires the entry and the film leaves
+  the app on its own. A flag here would be a second source of truth for the
+  same fact, and the two would disagree within a week.
+- **A film nobody lists is not in the library.** It disappears from the grid,
+  from Tonight, from the detail page and from the refresh queue — the entry is
+  kept, not deleted, so re-adding the film restores it without another TMDB
+  lookup.
 - **Removing a member takes the films nobody else wanted.** Anything another
   member still lists is untouched, enrichment included.
 

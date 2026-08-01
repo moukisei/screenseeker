@@ -113,7 +113,7 @@ def tonight_marks(session: Session, film_ids: list[int], *, profile: dict) -> di
 
 def tonight(session: Session, *, profile: dict) -> list[TonightPick]:
     """
-    Unwatched films with a best option in the base country, no VPN.
+    Films with a best option in the base country, no VPN, most wanted first.
 
     The product the CLI never exposed directly. best_option is a watch-strategy
     concept - it means a flatrate offer, in the base country, on a subscription
@@ -122,16 +122,20 @@ def tonight(session: Session, *, profile: dict) -> list[TonightPick]:
     Channel"-style reseller names substring-match an owned provider but are not
     it, so a pure-SQL filter over-counts by roughly half on this library.
 
-    So candidates are narrowed in SQL to what could possibly qualify - unwatched
-    films with a flatrate offer in the base country - and best_option is then
+    So candidates are narrowed in SQL to what could possibly qualify - films
+    with a flatrate offer in the base country - and best_option is then
     confirmed per film against batch-loaded offers. Constant query count, no
     per-film round trip.
+
+    There is no "unwatched" filter because there is no watched flag: a film
+    logged on Letterboxd leaves the watchlist, and `list_films` only returns
+    films somebody still lists.
     """
     base = profile["base_country"].upper()
 
     candidates, _ = library.list_films(
         session,
-        filters=LibraryFilter(watched=False, country=base, offer_type="flatrate"),
+        filters=LibraryFilter(country=base, offer_type="flatrate"),
         # A shortlist by nature; load them all and rank in memory.
         per_page=100_000,
     )
@@ -148,9 +152,19 @@ def tonight(session: Session, *, profile: dict) -> list[TonightPick]:
         if strategy.best_option:
             picks.append(TonightPick(film=film, best_option=strategy.best_option))
 
-    # Best films first - this is a recommendation, not a catalogue. Unrated
-    # films sort last rather than as zero.
-    picks.sort(key=lambda p: (-(p.film.vote_average or -1), p.film.title.casefold()))
+    # Consensus first, then the better film. What three of you want beats what
+    # one of you wants and IMDb likes more - that is the whole reason to pool
+    # the watchlists. Rating breaks the tie; unrated films sort last rather
+    # than as zero. Sorted in Python because wanted_by is already loaded with
+    # the chips, so ranking here costs nothing and a SQL sort would not survive
+    # the best_option filter above anyway.
+    picks.sort(
+        key=lambda p: (
+            -p.film.wanted_by,
+            -(p.film.vote_average or -1),
+            p.film.title.casefold(),
+        )
+    )
     return picks
 
 

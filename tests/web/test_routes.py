@@ -123,60 +123,38 @@ class TestDetail:
         assert "text/html" in response.headers["content-type"]
 
 
-class TestWatchedToggle:
-    def test_htmx_toggle_persists_and_returns_the_card(self, client, db):
-        film = make_film(db, title="The Matrix")
+class TestWatchedIsGone:
+    """
+    The watched flag was a second source of truth for what Letterboxd already
+    records. Logging a film there takes it off the watchlist, the next sync
+    retires the entry, and the film leaves the library on its own.
+    """
 
-        response = client.post(f"/film/{film.id}/watched", data={"watched": "true"}, headers=HTMX)
+    def test_the_toggle_route_no_longer_exists(self, client, db):
+        film = make_film(db)
+
+        assert client.post(f"/film/{film.id}/watched", data={"watched": "true"}).status_code == 404
+
+    def test_the_grid_offers_no_watched_filter(self, client, db):
+        make_film(db, title="The Matrix")
+
+        body = client.get("/").text
+
+        assert 'name="watched"' not in body
+        assert "Mark watched" not in body
+
+    def test_an_old_bookmark_carrying_the_filter_still_loads(self, client, db):
+        """
+        FastAPI ignores query parameters it does not declare, so a saved
+        `?watched=false` URL renders the grid rather than 422-ing. Widening
+        silently beats a dead link for a bookmark somebody kept.
+        """
+        make_film(db, title="The Matrix")
+
+        response = client.get("/?watched=false")
 
         assert response.status_code == 200
-        assert f'id="film-card-{film.id}"' in response.text
-        assert "card--watched" in response.text
-        # The returned fragment offers the inverse action.
-        assert 'value="false"' in response.text
-
-        db.expire_all()
-        assert db.get(type(film), film.id).watched is True
-
-    def test_toggle_is_idempotent(self, client, db):
-        film = make_film(db, watched=True)
-
-        client.post(f"/film/{film.id}/watched", data={"watched": "true"}, headers=HTMX)
-
-        db.expire_all()
-        assert db.get(type(film), film.id).watched is True
-
-    def test_unmarking_clears_the_timestamp(self, client, db):
-        film = make_film(db, watched=True)
-
-        client.post(f"/film/{film.id}/watched", data={"watched": "false"}, headers=HTMX)
-
-        db.expire_all()
-        refreshed = db.get(type(film), film.id)
-        assert refreshed.watched is False
-        assert refreshed.watched_at is None
-
-    def test_without_htmx_it_redirects(self, client, db):
-        film = make_film(db)
-
-        response = client.post(
-            f"/film/{film.id}/watched", data={"watched": "true"}, follow_redirects=False
-        )
-
-        assert response.status_code == 303
-        assert response.headers["location"] == f"/film/{film.id}"
-
-    def test_get_cannot_mutate(self, client, db):
-        film = make_film(db)
-
-        assert client.get(f"/film/{film.id}/watched?watched=true").status_code == 405
-
-        db.expire_all()
-        assert db.get(type(film), film.id).watched is False
-
-    def test_missing_film_is_404(self, client):
-        response = client.post("/film/9999/watched", data={"watched": "true"}, headers=HTMX)
-        assert response.status_code == 404
+        assert "The Matrix" in response.text
 
 
 class TestAppConfiguration:
@@ -229,17 +207,18 @@ class TestFilters:
 
     def stock(self, db):
         make_film(db, title="Wanted", tmdb_id=1, offers=[("FR", "Netflix", "flatrate")])
-        make_film(db, title="Seen", tmdb_id=2, watched=True, offers=[("FR", "Netflix", "flatrate")])
+        make_film(db, title="Dropped", tmdb_id=2, owners=(), offers=[("FR", "Netflix", "flatrate")])
         make_film(db, title="American", tmdb_id=3, offers=[("US", "Netflix", "flatrate")])
         make_film(db, title="Mouse", tmdb_id=4, offers=[("FR", "Disney Plus", "flatrate")])
 
     def test_the_worked_example_is_one_url(self, client, db):
         self.stock(db)
 
-        body = client.get("/?watched=false&provider=Netflix&country=FR&offer_type=flatrate").text
+        body = client.get("/?provider=Netflix&country=FR&offer_type=flatrate").text
 
         assert "Wanted" in body
-        assert "Seen" not in body
+        # Matches every filter, but nobody lists it any more.
+        assert "Dropped" not in body
         assert "American" not in body
         assert "Mouse" not in body
         assert "1 film" in body
@@ -247,11 +226,11 @@ class TestFilters:
     def test_the_form_reflects_the_url_it_was_loaded_from(self, client, db):
         self.stock(db)
 
-        body = client.get("/?provider=Netflix&country=FR&watched=false").text
+        body = client.get("/?provider=Netflix&country=FR&offer_type=flatrate").text
 
         assert 'value="Netflix"' in body
         assert '<option value="FR" selected>' in body
-        assert 'value="false" selected' in body
+        assert '<option value="flatrate" selected>' in body
         assert "Clear" in body
 
     def test_no_filters_means_no_clear_link(self, client, db):
@@ -272,13 +251,13 @@ class TestFilters:
 
     def test_the_form_serialises_every_empty_field_without_a_422(self, client, db):
         # The grid form sends every control on each keystroke, so its empty
-        # selects arrive as country=&offer_type=&watched=. min_length, the enum
-        # and the bool parse each reject "", which 422'd the whole form and made
-        # the search box look dead. A blank field must read as "no filter".
+        # selects arrive as country=&offer_type=&member_match=. min_length and
+        # the enums each reject "", which 422'd the whole form and made the
+        # search box look dead. A blank field must read as "no filter".
         make_film(db, title="The Matrix", tmdb_id=1)
 
         r = client.get(
-            "/?per_page=48&query=matr&provider=&country=&offer_type=&watched=&sort=added",
+            "/?per_page=48&query=matr&provider=&country=&offer_type=&member_match=&sort=added",
             headers={"HX-Request": "true"},
         )
 
@@ -287,9 +266,9 @@ class TestFilters:
 
     def test_search_composes_with_a_filter_in_the_url(self, client, db):
         make_film(db, title="The Matrix", tmdb_id=1, offers=[("FR", "Netflix", "flatrate")])
-        make_film(db, title="The Matrix Revisited", tmdb_id=2, watched=True)
+        make_film(db, title="The Matrix Revisited", tmdb_id=2)
 
-        body = client.get("/?query=matrix&watched=false").text
+        body = client.get("/?query=matrix&provider=Netflix").text
 
         assert "The Matrix<" in body or "The Matrix</a>" in body
         assert "Revisited" not in body
@@ -348,11 +327,6 @@ class TestCardExtras:
 
         assert "▶" not in client.get("/").text
 
-    def test_a_watched_card_shows_when_it_was_seen(self, client, db):
-        make_film(db, title="Seen", tmdb_id=1, watched=True)
-
-        assert "watched today" in client.get("/").text
-
     def test_a_card_shows_the_runtime_when_known(self, client, db):
         make_film(db, title="Long", tmdb_id=1, runtime=125)
 
@@ -366,13 +340,10 @@ class TestCardExtras:
         assert "Fresh" in body
         assert "h " not in body[body.index("Fresh") : body.index("Fresh") + 100]
 
-    def test_the_toggle_fragment_keeps_the_tonight_badge(self, client, db):
-        film = make_film(db, title="Watchable", tmdb_id=1, offers=[("FR", "Netflix", "flatrate")])
+    def test_a_watchable_card_carries_the_tonight_badge(self, client, db):
+        make_film(db, title="Watchable", tmdb_id=1, offers=[("FR", "Netflix", "flatrate")])
 
-        # Marking watched returns the card fragment; its badge must survive.
-        body = client.post(f"/film/{film.id}/watched", data={"watched": "true"}, headers=HTMX).text
-
-        assert "▶ Netflix" in body
+        assert "▶ Netflix" in client.get("/").text
 
 
 class TestDetailScoping:

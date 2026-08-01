@@ -154,9 +154,6 @@ class FilmSummary(BaseModel):
     tmdb_year: Optional[int] = None
     year_mismatch: bool = False
 
-    watched: bool = False
-    watched_at: Optional[datetime] = None
-
     offer_count: int = Field(default=0, description="Persisted offers; 0 if not loaded")
     last_checked: Optional[datetime] = None
     cache_age_days: Optional[int] = None
@@ -214,8 +211,6 @@ class FilmSummary(BaseModel):
             letterboxd_year=film.letterboxd_year,
             tmdb_year=film.tmdb_year,
             year_mismatch=bool(film.year_mismatch),
-            watched=bool(film.watched),
-            watched_at=film.watched_at,
             offer_count=offer_count if offer_count is not None else len(film.streaming_offers),
             last_checked=last_checked,
             cache_age_days=age_days,

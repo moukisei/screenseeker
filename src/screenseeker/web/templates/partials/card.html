@@ -1,9 +1,11 @@
 {#
-  One film in the grid. Also returned on its own by POST /film/{id}/watched,
-  so it must render standalone from `film` alone and carry the id that the
-  toggle swaps.
+  One film in the grid.
+
+  There is no "mark watched" control: logging a film on Letterboxd takes it off
+  the watchlist there, and the next sync drops it out of the library on its
+  own. A button here would be a second place to record the same fact.
 #}
-<article class="card{% if film.watched %} card--watched{% endif %}" id="film-card-{{ film.id }}">
+<article class="card" id="film-card-{{ film.id }}">
 
   <a class="card__poster" href="/film/{{ film.id }}">
     {% if film.poster %}
@@ -48,8 +50,8 @@
 
       `mark` is the best base-country, no-VPN option for this film, when it has
       one. It links straight to the provider so the card is one click from
-      playing. The grid and Tonight both pass it; the stale view and the
-      watched-toggle fragment do not, and the block simply vanishes.
+      playing. The grid and Tonight both pass it; the stale view does not, and
+      the block simply vanishes.
 
       The availability pill is what a grid row can know cheaply. Which of those
       offers is on a subscription the user holds needs the offer rows joined
@@ -82,24 +84,6 @@
         </span>
       {% endif %}
     </div>
-
-    {% if film.watched and film.watched_at %}
-      <p class="card__seen">✓ watched {{ film.watched_at|ago }}</p>
-    {% endif %}
-
-    {#
-      POST, never GET. The desired state travels in the body so a resubmit is
-      idempotent, and the fragment that comes back carries the flipped value.
-    #}
-    <form class="toggle" method="post" action="/film/{{ film.id }}/watched"
-          hx-post="/film/{{ film.id }}/watched"
-          hx-target="#film-card-{{ film.id }}"
-          hx-swap="outerHTML">
-      <input type="hidden" name="watched" value="{{ 'false' if film.watched else 'true' }}">
-      <button type="submit" class="toggle__button">
-        {{ 'Watched' if film.watched else 'Mark watched' }}
-      </button>
-    </form>
   </div>
 
 </article>

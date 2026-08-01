@@ -41,7 +41,7 @@ def _days(value: Optional[int]) -> str:
 
 
 def _ago(value: Optional[datetime]) -> str:
-    """A past datetime as a coarse relative phrase, for the watched date."""
+    """A past datetime as a coarse relative phrase, e.g. a member's last sync."""
     if value is None:
         return ""
     aware = value if value.tzinfo else value.replace(tzinfo=UTC)

@@ -12,6 +12,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from screenseeker.database.models import Member
 from screenseeker.web import auth
 from screenseeker.web.app import create_app
 from screenseeker.web.deps import get_db, get_profile
@@ -127,13 +128,8 @@ class TestDisabled:
         assert response.headers["location"] == "/"
 
     def test_mutations_need_no_origin_when_auth_is_off(self, client, db):
-        film = make_film(db, title="Toggle", tmdb_id=1)
         # No Origin header, no session - still fine, because auth is off.
-        response = client.post(
-            f"/film/{film.id}/watched",
-            data={"watched": "true"},
-            headers={"HX-Request": "true"},
-        )
+        response = client.post("/members", data={"username": "alice"})
         assert response.status_code == 200
 
 
@@ -234,39 +230,28 @@ class TestCsrf:
         assert not auth.origin_is_trusted(Request(scope))
 
     def test_a_mutation_without_an_origin_is_refused(self, auth_client, db):
-        film = make_film(db, title="Guarded", tmdb_id=1)
         log_in(auth_client)
 
         # Logged in, valid session cookie, but no Origin header: the forged
         # cross-site POST shape.
-        response = auth_client.post(
-            f"/film/{film.id}/watched",
-            data={"watched": "true"},
-            headers={"HX-Request": "true"},
-        )
+        response = auth_client.post("/members", data={"username": "alice"})
         assert response.status_code == 403
 
     def test_a_cross_origin_mutation_is_refused(self, auth_client, db):
-        film = make_film(db, title="Guarded", tmdb_id=1)
         log_in(auth_client)
 
         response = auth_client.post(
-            f"/film/{film.id}/watched",
-            data={"watched": "true"},
-            headers={"HX-Request": "true", "origin": "http://evil.example"},
+            "/members",
+            data={"username": "alice"},
+            headers={"origin": "http://evil.example"},
         )
         assert response.status_code == 403
 
     def test_a_same_origin_mutation_succeeds(self, auth_client, db):
-        film = make_film(db, title="Guarded", tmdb_id=1)
         log_in(auth_client)
 
-        response = auth_client.post(
-            f"/film/{film.id}/watched",
-            data={"watched": "true"},
-            headers={"HX-Request": "true", **ORIGIN},
-        )
+        response = auth_client.post("/members", data={"username": "alice"}, headers=ORIGIN)
         assert response.status_code == 200
 
         db.expire_all()
-        assert db.get(type(film), film.id).watched is True
+        assert db.query(Member).one().letterboxd_username == "alice"

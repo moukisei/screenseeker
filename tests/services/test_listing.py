@@ -17,6 +17,7 @@ from sqlalchemy import event
 from screenseeker.database.models import Film, StreamingOffer
 from screenseeker.services import library
 from screenseeker.services.library import LibraryFilter
+from tests.conftest import own
 
 
 def make_film(
@@ -28,17 +29,21 @@ def make_film(
     added_days_ago=0,
     tmdb_id=None,
     confidence=None,
-    watched=False,
     offers=(),
+    owners=None,
 ):
-    """`offers` is a list of (country, provider, offer_type)."""
+    """
+    `offers` is a list of (country, provider, offer_type).
+
+    `owners` defaults to a stand-in member, because a film nobody lists is not
+    in the library and no query returns it. Pass `owners=()` for that case.
+    """
     film = Film(
         letterboxd_title=title,
         letterboxd_year=year,
         tmdb_id=tmdb_id,
         vote_average=rating,
         match_confidence=confidence,
-        watched=watched,
         date_added=datetime.now(UTC) - timedelta(days=added_days_ago),
     )
     session.add(film)
@@ -57,7 +62,7 @@ def make_film(
             )
         )
     session.flush()
-    return film
+    return own(session, film, owners)
 
 
 def titles(page):
@@ -73,17 +78,14 @@ class TestFiltering:
     """Composability is the whole point: the CLI structurally could not do it."""
 
     def test_the_plans_worked_example_is_one_call(self, test_session):
-        """ "unwatched, on Netflix, available in FR" - the step 6 acceptance test."""
+        """ "on Netflix, available in FR, flatrate" - the step 6 acceptance test."""
         make_film(test_session, "Wanted", offers=[("FR", "Netflix", "flatrate")])
-        make_film(test_session, "Seen", watched=True, offers=[("FR", "Netflix", "flatrate")])
         make_film(test_session, "Wrong country", offers=[("US", "Netflix", "flatrate")])
         make_film(test_session, "Wrong provider", offers=[("FR", "Disney Plus", "flatrate")])
         make_film(test_session, "Nowhere")
         test_session.commit()
 
-        found, total = listed(
-            test_session, watched=False, provider="Netflix", country="FR", offer_type="flatrate"
-        )
+        found, total = listed(test_session, provider="Netflix", country="FR", offer_type="flatrate")
 
         assert found == ["Wanted"]
         assert total == 1
@@ -136,14 +138,20 @@ class TestFiltering:
         assert found == ["Everywhere"]
         assert total == 1
 
-    def test_watched_filter_is_three_valued(self, test_session):
-        make_film(test_session, "Seen", watched=True)
-        make_film(test_session, "Unseen", watched=False)
+    def test_a_film_nobody_lists_is_not_in_the_library(self, test_session):
+        """
+        The rule the whole grid rests on. Logging a film on Letterboxd takes it
+        off the watchlist; the next sync retires the entry, and the film has to
+        disappear here rather than linger as sediment nobody can clear.
+        """
+        make_film(test_session, "Still Wanted")
+        make_film(test_session, "Dropped", owners=())
         test_session.commit()
 
-        assert listed(test_session, watched=True)[0] == ["Seen"]
-        assert listed(test_session, watched=False)[0] == ["Unseen"]
-        assert sorted(listed(test_session)[0]) == ["Seen", "Unseen"]
+        found, total = listed(test_session)
+
+        assert found == ["Still Wanted"]
+        assert total == 1
 
     def test_country_is_matched_case_insensitively(self, test_session):
         make_film(test_session, "French", offers=[("FR", "Canal+", "flatrate")])
@@ -153,15 +161,16 @@ class TestFiltering:
 
     def test_the_total_counts_matches_not_the_library(self, test_session):
         for i in range(5):
-            make_film(test_session, f"Film {i}", watched=i < 2)
+            make_film(test_session, f"Film {i}", offers=[("FR", "Netflix", "flatrate")])
+        make_film(test_session, "Elsewhere", offers=[("US", "Netflix", "flatrate")])
         test_session.commit()
 
         films, total = library.list_films(
-            test_session, filters=LibraryFilter(watched=True), per_page=1
+            test_session, filters=LibraryFilter(country="FR"), per_page=1
         )
 
         assert len(films) == 1
-        assert total == 2
+        assert total == 5
 
     def test_an_empty_string_does_not_narrow(self, test_session):
         """Blank form fields arrive as "" and must behave like "no filter"."""
@@ -174,7 +183,7 @@ class TestFiltering:
     def test_filters_round_trip_through_url_parameters(self):
         """Views are bookmarkable, so the filter has to survive the URL."""
         original = LibraryFilter(
-            query="matrix", provider="Netflix", country="FR", offer_type="flatrate", watched=False
+            query="matrix", provider="Netflix", country="FR", offer_type="flatrate"
         )
         params = original.as_params()
 
@@ -183,7 +192,6 @@ class TestFiltering:
             "provider": "Netflix",
             "country": "FR",
             "offer_type": "flatrate",
-            "watched": "false",
         }
         assert LibraryFilter().as_params() == {}
 
@@ -212,12 +220,12 @@ class TestSearch:
         assert listed(test_session, query="nonesuch")[0] == []
 
     def test_search_composes_with_other_filters(self, test_session):
-        make_film(test_session, "The Matrix", watched=False, offers=[("FR", "Netflix", "flatrate")])
-        make_film(test_session, "The Matrix Revisited", watched=True)
+        make_film(test_session, "The Matrix", offers=[("FR", "Netflix", "flatrate")])
+        make_film(test_session, "The Matrix Revisited")
         test_session.commit()
 
-        # "matrix" AND unwatched -> only the first.
-        assert listed(test_session, query="matrix", watched=False)[0] == ["The Matrix"]
+        # "matrix" AND on Netflix -> only the first.
+        assert listed(test_session, query="matrix", provider="Netflix")[0] == ["The Matrix"]
 
     def test_wildcards_in_the_term_are_literal(self, test_session):
         """A stray % must not turn into "match everything"."""
@@ -371,7 +379,7 @@ class TestQueryCost:
         try:
             films, total = library.list_films(
                 test_session,
-                filters=LibraryFilter(watched=False, provider="Netflix", country="FR"),
+                filters=LibraryFilter(provider="Netflix", country="FR", offer_type="flatrate"),
                 per_page=5,
             )
         finally:

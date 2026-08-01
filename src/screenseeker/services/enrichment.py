@@ -24,7 +24,7 @@ from ..enrichers.tmdb_enricher import TMDBEnricher
 from ..exceptions import ConfigurationError
 from ..logger import get_logger
 from ..user_config import get_tmdb_api_key
-from .library import get_or_create_film, merge_films, offer_counts
+from .library import IS_WANTED, get_or_create_film, merge_films, offer_counts
 from .models import FilmSummary
 
 logger = get_logger(__name__)
@@ -81,11 +81,18 @@ def build_enricher(cfg: dict) -> TMDBEnricher:
 
 
 def stale_films(session: Session, days: int = 7) -> list[Film]:
-    """Film rows never checked, or checked longer than `days` ago."""
+    """
+    Film rows never checked, or checked longer than `days` ago.
+
+    Restricted to films someone still has on their watchlist. A film the
+    household has dropped is not shown anywhere, so fetching its availability
+    spends the TMDB rate limit on an answer nobody will ever read - and the
+    nightly refresh would keep paying for it forever.
+    """
     cutoff = datetime.now(UTC) - timedelta(days=days)
     return (
         session.query(Film)
-        .filter(or_(Film.last_checked.is_(None), Film.last_checked < cutoff))
+        .filter(or_(Film.last_checked.is_(None), Film.last_checked < cutoff), IS_WANTED)
         .all()
     )
 

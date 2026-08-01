@@ -11,11 +11,11 @@ from sqlalchemy import event
 
 from screenseeker.database.models import Film, StreamingOffer
 from screenseeker.services import library
-from screenseeker.services.library import LibraryFilter
 from screenseeker.services.models import FilmDetail, FilmSummary, OfferOut
+from tests.conftest import own
 
 
-def make_film(session, title="The Matrix", year=1999, tmdb_id=603, offers=2, watched=False):
+def make_film(session, title="The Matrix", year=1999, tmdb_id=603, offers=2, owners=None):
     film = Film(
         letterboxd_title=title,
         letterboxd_year=year,
@@ -29,7 +29,6 @@ def make_film(session, title="The Matrix", year=1999, tmdb_id=603, offers=2, wat
         match_confidence="exact",
         date_added=datetime.now(UTC),
         last_checked=datetime.now(UTC),
-        watched=watched,
     )
     session.add(film)
     session.flush()
@@ -49,7 +48,7 @@ def make_film(session, title="The Matrix", year=1999, tmdb_id=603, offers=2, wat
             )
         )
     session.flush()
-    return film
+    return own(session, film, owners)
 
 
 class TestOfferOut:
@@ -134,7 +133,7 @@ class TestDetachedInstanceSafety:
         make_film(test_session)
         test_session.commit()
 
-        summaries = library.list_films(test_session, filters=LibraryFilter(watched=False))[0]
+        summaries = library.list_films(test_session)[0]
         test_session.close()
 
         for s in summaries:
@@ -142,6 +141,9 @@ class TestDetachedInstanceSafety:
             assert s.offer_count == 2
             assert s.poster is not None
             assert s.is_stale is False
+            # The chips are Pydantic too, so they outlive the session as well.
+            assert s.wanted_by == 1
+            assert s.members[0].display_name == "Tester"
             _ = s.model_dump()
 
     def test_detail_survives_session_close(self, test_session):
@@ -161,16 +163,6 @@ class TestDetachedInstanceSafety:
             assert offer.offer_type
             assert offer.logo is not None
         _ = detail.model_dump()
-
-    def test_watched_toggle_survives_session_close(self, test_session):
-        film = make_film(test_session)
-        test_session.commit()
-
-        updated = library.set_watched_by_id(test_session, film.id, watched=True)
-        test_session.close()
-
-        assert updated.watched is True
-        assert updated.full_title
 
 
 class TestQueryCounts:
@@ -197,7 +189,7 @@ class TestQueryCounts:
 
         summaries, statements = self.count_queries(
             test_session,
-            lambda: library.list_films(test_session, filters=LibraryFilter(watched=False))[0],
+            lambda: library.list_films(test_session)[0],
         )
 
         assert len(summaries) == 12
@@ -209,7 +201,7 @@ class TestQueryCounts:
     def test_empty_listing_skips_the_offer_count_query(self, test_session):
         summaries, statements = self.count_queries(
             test_session,
-            lambda: library.list_films(test_session, filters=LibraryFilter(watched=False))[0],
+            lambda: library.list_films(test_session)[0],
         )
 
         assert summaries == []

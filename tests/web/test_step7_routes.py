@@ -22,7 +22,7 @@ class TestTonightRoute:
         make_film(db, title="Ready", tmdb_id=1, offers=[("FR", "Netflix", "flatrate")])
         make_film(db, title="Abroad", tmdb_id=2, offers=[("US", "Netflix", "flatrate")])
         make_film(db, title="Rental", tmdb_id=3, offers=[("FR", "Netflix", "rent")])
-        make_film(db, title="Seen", tmdb_id=4, watched=True, offers=[("FR", "Netflix", "flatrate")])
+        make_film(db, title="Dropped", tmdb_id=4, owners=(), offers=[("FR", "Netflix", "flatrate")])
 
         body = client.get("/tonight").text
 
@@ -30,7 +30,7 @@ class TestTonightRoute:
         assert "▶ Netflix" in body
         assert "Abroad" not in body
         assert "Rental" not in body
-        assert "Seen" not in body
+        assert "Dropped" not in body
         assert "1 film ready" in body
 
     def test_says_so_when_nothing_is_watchable(self, client, db):
