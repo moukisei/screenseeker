@@ -5,13 +5,23 @@
 # /etc/cron.d entries carry a user field (here: screenseeker). Adjust paths to
 # your install. Both lines source the env file so SCREENSEEKER_DB_PATH and the
 # TMDB key match the running service.
+#
+# Logs go under /var/lib/screenseeker, not /var/log. That is not a style
+# choice: /var/log is root-owned and these jobs run as `screenseeker`, so the
+# shell cannot create the file and the redirection fails *before* the command
+# runs - a silently dead cron that leaves no log to explain itself. The data
+# directory is the one path the service user owns and the systemd unit grants
+# write access to.
 
 SHELL=/bin/bash
 
 # Keep the mirror fresh: refresh availability for every stale film, nightly at
 # 04:00. --yes skips the confirmation prompt. This is the same work the web
 # Refresh button does; running it here means the data is fresh before you look.
-0 4 * * * screenseeker set -a; . /etc/screenseeker.env; /opt/screenseeker/.venv/bin/screenseeker refresh --yes >> /var/log/screenseeker-refresh.log 2>&1
+0 4 * * * screenseeker set -a; . /etc/screenseeker.env; /opt/screenseeker/.venv/bin/screenseeker refresh --yes >> /var/lib/screenseeker/refresh.log 2>&1
 
 # Snapshot the database every day at 03:30, before the refresh writes to it.
-30 3 * * * screenseeker set -a; . /etc/screenseeker.env; /opt/screenseeker/deploy/backup.sh >> /var/log/screenseeker-backup.log 2>&1
+30 3 * * * screenseeker set -a; . /etc/screenseeker.env; /opt/screenseeker/deploy/backup.sh >> /var/lib/screenseeker/backup.log 2>&1
+
+# Neither log rotates. They are small - a few lines a night - but if you leave
+# this running for years, add them to logrotate or truncate them occasionally.

@@ -69,7 +69,10 @@ then run the `save` again.
 ssh -i /path/to/your-key.key ubuntu@<reserved-ip>
 
 sudo apt update && sudo apt -y upgrade
-sudo apt -y install git
+# sqlite3 is the CLI, not the Python module: deploy/backup.sh shells out to it
+# for a consistent `.backup` snapshot. Without it the nightly backup cron fails
+# every night into a log nobody reads.
+sudo apt -y install git sqlite3
 ```
 
 Python 3.14 is required and Ubuntu ships 3.12, so install 3.14 with `uv` (it has
@@ -219,6 +222,16 @@ Install the nightly refresh + backup cron:
 sudo cp /opt/screenseeker/deploy/screenseeker.cron /etc/cron.d/screenseeker
 ```
 
+Do not assume it works. A cron job that fails silently looks exactly like one
+that has nothing to do, so run both by hand once and confirm they write:
+
+```bash
+sudo -u screenseeker bash -c 'set -a; . /etc/screenseeker.env; \
+  /opt/screenseeker/deploy/backup.sh >> /var/lib/screenseeker/backup.log 2>&1'
+cat /var/lib/screenseeker/backup.log
+ls -l /var/lib/screenseeker/backups/
+```
+
 ---
 
 ## Updating the deployment
@@ -265,6 +278,16 @@ cached favicon or CSS.
   **add your real account, sync it, and only then remove `household`**. Removing
   it first deletes every film nobody else lists — which, at that point, is all
   of them.
+- **`backup.sh: sqlite3: command not found`** — `sudo apt -y install sqlite3`.
+  The Python module is built in; the command-line tool is a separate package,
+  and `.backup` is what makes the snapshot consistent under WAL.
+- **The cron never runs and leaves no log** — earlier versions of
+  `screenseeker.cron` redirected to `/var/log/`, which is root-owned while the
+  jobs run as `screenseeker`. The shell cannot create the file, so the
+  redirection fails before the command does anything, and there is no log to
+  explain it. Reinstall the current cron file (it writes to
+  `/var/lib/screenseeker/`) and check `sudo grep CRON /var/log/syslog` for the
+  old failures.
 - **`pip install` fails building a wheel on ARM** — install build deps:
   `sudo apt install -y build-essential libffi-dev`, then retry.
 - **Service won't start** — `journalctl -u screenseeker -n 50 --no-pager`. A
