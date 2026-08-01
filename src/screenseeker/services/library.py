@@ -397,17 +397,9 @@ def _member_predicate(filters: LibraryFilter):
     return select(WatchlistEntry.id).where(*live, WatchlistEntry.member_id.in_(ids)).exists()
 
 
-# Somebody, right now, has this film on their watchlist.
-#
-# This is the library's definition of membership, not a filter the user picks:
-# a film everyone has dropped is not in the library any more. Logging a film on
-# Letterboxd takes it off the watchlist, which is what makes this the only
-# "watched" signal the app needs - there is no flag here to keep in sync with
-# the diary, and nothing to click twice.
-#
-# The row is kept rather than deleted (see WatchlistEntry.removed_at), so a
-# half-read scrape is recoverable and a re-added film comes back with its
-# original date. It is simply invisible until someone wants it again.
+# Somebody has this film on their watchlist right now. Not a filter the user
+# picks: a film everyone dropped is not in the library. The entry row survives
+# (removed_at), so re-adding restores it without another TMDB lookup.
 IS_WANTED = (
     select(WatchlistEntry.id)
     .where(WatchlistEntry.film_id == Film.id, WatchlistEntry.removed_at.is_(None))
@@ -533,9 +525,8 @@ def _facet_values(session: Session, column: InstrumentedAttribute[str]) -> list[
     provider that only ever appears on films nobody has listed for months -
     pick it and the grid comes back empty with no way to tell why.
 
-    `column` is annotated rather than left bare: with an implicit Any, mypy
-    cannot solve the type variable on `distinct()` and gives up on the row
-    type, which surfaces as "Need type annotation" on the comprehension.
+    `column` is annotated because with an implicit Any, mypy cannot solve the
+    type variable on `distinct()` and reports "Need type annotation".
     """
     wanted = select(Film.id).where(Film.id == StreamingOffer.film_id, IS_WANTED).exists()
     rows = session.query(distinct(column)).filter(wanted).all()

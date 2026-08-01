@@ -1,21 +1,10 @@
 """
 Migrations must not destroy data.
 
-This exists because one of them did. `drop_watched` originally used
-`batch_alter_table`, which on SQLite emulates ALTER by rebuilding the table:
-copy the rows out, DROP the original, rename the copy. Both `streaming_offers`
-and `watchlist_entries` reference `films` with ON DELETE CASCADE, and
-database/session.py registers a global connect listener that sets
-`PRAGMA foreign_keys=ON` - which Alembic's own connection inherits, because
-env.py imports that module. Dropping the old table deleted every offer and
-every watchlist entry in the database.
-
-It reached production. Nothing caught it, because the schema afterwards was
-exactly right and only the rows were gone.
-
-These run the real chain against a real file, so they are slower than the rest
-of the suite. That is the point: an in-memory stub would not have caught it
-either.
+`drop_watched` once used batch_alter_table, which rebuilds the table on SQLite;
+the DROP cascaded away every streaming_offer and watchlist_entry in production.
+Nothing caught it because the schema afterwards was correct - only rows were
+gone. These run the real chain against a real file for that reason.
 """
 
 import ast
@@ -44,11 +33,10 @@ REBUILDING_OPERATIONS = (
 
 def _rebuilding_ops_inside_batch(source: str) -> list[str]:
     """
-    Rebuild-forcing calls that appear inside a `with op.batch_alter_table(...)`.
+    Rebuild-forcing calls inside a `with op.batch_alter_table(...)` block.
 
-    Parsed rather than grepped. A substring search matches the word in a
-    comment - including the one in drop_watched explaining why it must not do
-    this - so the guard would fire on the migration that already got it right.
+    Parsed, not grepped: a substring search also matches the comments warning
+    against it, so the guard would fire on migrations that got it right.
     """
     found = set()
 
@@ -78,11 +66,8 @@ def migrated(tmp_path):
     """
     An alembic Config, and the database it will actually write to.
 
-    Not a path of our choosing: migrations/env.py overwrites `sqlalchemy.url`
-    with `screenseeker.database.session.DATABASE_URL`, which the autouse
-    isolate_database fixture has already pointed at tmp_path. Setting our own
-    URL here would be silently ignored and the tests would run against an
-    empty database.
+    env.py overwrites `sqlalchemy.url` with session.DATABASE_URL, so setting
+    our own path here would be ignored and the tests would find nothing.
     """
     from screenseeker.database import session as db_session
 
@@ -164,16 +149,10 @@ class TestNoCascadeWipe:
 
     def test_no_revision_rebuilds_a_table_through_batch_mode(self):
         """
-        A static guard, so the next one is caught at authoring time rather than
-        after it has eaten a production database.
+        Caught at authoring time rather than after it eats a database.
 
-        batch_alter_table is not banned outright - the initial schema uses it
-        for create_index, which SQLite does natively without a rebuild. What is
-        banned is pairing it with an operation that forces the copy-drop-rename.
-
-        If you genuinely need a rebuild, the cascade has to be dealt with
-        first, and `PRAGMA foreign_keys=OFF` will not do it: SQLite ignores that
-        pragma inside a transaction, and Alembic runs migrations in one.
+        batch_alter_table is fine for create_index, which SQLite does natively.
+        Pairing it with an operation that forces a table rebuild is not.
         """
         offenders = {}
         for path in sorted(Path("migrations/versions").glob("*.py")):

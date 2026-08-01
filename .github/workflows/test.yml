@@ -28,8 +28,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -e .
+        pip install -e '.[web,dev]'
 
     - name: Run tests with pytest
       run: |
@@ -51,8 +50,7 @@ jobs:
     - name: Install dependencies with coverage
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -e .
+        pip install -e '.[web,dev]'
 
     - name: Run tests with coverage
       run: |
@@ -82,17 +80,28 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -e .
+        pip install -e '.[web,dev]'
 
+    # Explicit paths, not `.`: the repo root also holds output/, tmp/ and
+    # htmlcov/, and a stray script there should not decide whether CI is green.
     - name: Run ruff linter
       run: |
-        ruff check .
+        ruff check src tests migrations
 
     - name: Run ruff formatter check
       run: |
-        ruff format --check .
+        ruff format --check src tests migrations
 
     - name: Run isort check
       run: |
-        isort --check-only --diff .
+        isort --check-only --diff src tests migrations
+
+    # Same flags and paths as the pre-commit hooks, so a push cannot fail on
+    # something a commit let through.
+    - name: Run mypy
+      run: |
+        mypy --ignore-missing-imports --check-untyped-defs src migrations
+
+    - name: Run bandit
+      run: |
+        bandit -c pyproject.toml -r src migrations

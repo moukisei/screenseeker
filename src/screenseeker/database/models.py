@@ -68,11 +68,8 @@ class Film(Base):
     # The earliest date any member added this film. Per-member dates live on
     # WatchlistEntry; this is denormalised so the "recently added" sort stays a
     # plain column and does not need a correlated MIN() per row.
-    #
-    # There is deliberately no `watched` column. Logging a film on Letterboxd
-    # takes it off the watchlist, the next sync retires the entry, and the film
-    # leaves the library - so a flag here would be a second source of truth
-    # that has to be kept in agreement with the diary and cannot be.
+    # No `watched` column on purpose: logging a film on Letterboxd removes it
+    # from the watchlist, so the next sync drops it from the library.
     date_added: Mapped[datetime] = Column(DateTime, nullable=False)
     notes: Mapped[Optional[str]] = Column(Text, nullable=True)  # Personal notes
 
