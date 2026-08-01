@@ -8,7 +8,7 @@ and the database package now holds only models, engine and session.
 
 from datetime import UTC, datetime, timedelta
 
-from screenseeker.database.models import StreamingOffer
+from screenseeker.database.models import Film, StreamingOffer, WatchlistEntry
 from screenseeker.enrichers.enrichment_models import EnrichmentResult
 from screenseeker.enrichers.enrichment_models import StreamingOffer as StreamingOfferPydantic
 from screenseeker.enrichers.enrichment_models import TMDBMovieInfo
@@ -19,7 +19,8 @@ from screenseeker.services.enrichment import (
     save_streaming_offers,
     update_film_from_enrichment,
 )
-from screenseeker.services.library import get_or_create_film
+from screenseeker.services.library import get_or_create_film, record_entry
+from screenseeker.services.members import create_member
 
 
 def create_test_tmdb_movie(tmdb_id=123, title="Test Movie", year=2020, runtime=100):
@@ -149,14 +150,22 @@ class TestUpdateFilmFromEnrichment:
         assert updated_film.match_confidence == "exact"
         assert updated_film.runtime == 100
 
-    def test_detects_duplicate_tmdb_id(self, test_session):
-        """Test that duplicate TMDB IDs are detected and handled."""
+    def test_two_rows_with_one_tmdb_id_are_merged(self, test_session):
+        """
+        Two rows resolving to one TMDB id are the same film, spelled two ways.
+
+        That happens as soon as a household has more than one watchlist -
+        Letterboxd omits the year on some entries - so the rows are folded
+        together. Flagging them and moving on used to leave the losing row
+        permanently without offers.
+        """
         film1, _ = get_or_create_film(test_session, "Film 1", 2020)
         film1.tmdb_id = 999
         test_session.commit()
 
         film2, _ = get_or_create_film(test_session, "Film 2", 2020)
         test_session.commit()
+        orphaned_id = film2.id
 
         tmdb_movie = create_test_tmdb_movie(tmdb_id=999)
         enrichment = EnrichmentResult(
@@ -170,8 +179,43 @@ class TestUpdateFilmFromEnrichment:
 
         updated_film = update_film_from_enrichment(test_session, film2, enrichment)
 
-        assert updated_film.tmdb_id is None
-        assert updated_film.match_confidence == "duplicate"
+        # The already-enriched row survives, so nothing is refetched.
+        assert updated_film.id == film1.id
+        assert updated_film.tmdb_id == 999
+        assert updated_film.match_confidence == "exact"
+        assert test_session.query(Film).filter(Film.id == orphaned_id).first() is None
+
+    def test_merging_moves_the_entries_of_the_dropped_row(self, test_session):
+        """The losing row's members keep wanting the film."""
+        alice = create_member(test_session, "alice", display_name="Alice")
+        bob = create_member(test_session, "bob", display_name="Bob")
+
+        keeper, _ = get_or_create_film(test_session, "Heat", 1995)
+        keeper.tmdb_id = 949
+        record_entry(test_session, alice.id, keeper)
+
+        loser, _ = get_or_create_film(test_session, "Heat ", None)
+        record_entry(test_session, bob.id, loser)
+        test_session.commit()
+
+        enrichment = EnrichmentResult(
+            query_title="Heat",
+            success=True,
+            tmdb_movie=create_test_tmdb_movie(tmdb_id=949),
+            streaming_offers=[],
+            match_confidence="exact",
+            error_message=None,
+        )
+
+        merged = update_film_from_enrichment(test_session, loser, enrichment)
+
+        owners = {
+            entry.member_id
+            for entry in test_session.query(WatchlistEntry)
+            .filter(WatchlistEntry.film_id == merged.id)
+            .all()
+        }
+        assert owners == {alice.id, bob.id}
 
 
 class TestEnrichAndSaveFilm:

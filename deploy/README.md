@@ -69,8 +69,16 @@ Files in this directory, in the order you install them:
    sudo "$EDITOR" /etc/screenseeker.env
    ```
 
-   The migration to the database schema runs from the checkout:
-   `SCREENSEEKER_DB_PATH=/var/lib/screenseeker/screenseeker.db .venv/bin/alembic upgrade head`
+   The migration to the database schema runs from the checkout. Pass the config
+   path as well as the database — a migration may read config.toml to backfill,
+   and the household one seeds your first member from it:
+
+   ```bash
+   sudo -u screenseeker env \
+     SCREENSEEKER_DB_PATH=/var/lib/screenseeker/screenseeker.db \
+     SCREENSEEKER_CONFIG_PATH=/var/lib/screenseeker/config.toml \
+     .venv/bin/alembic upgrade head
+   ```
 
 4. **Service**
 
@@ -115,5 +123,21 @@ row first, or simply don't run the web refresh manually — the cron keeps thing
 fresh on its own.
 
 `sync` is the one to never run concurrently with itself, and nothing here
-schedules it: the watchlist changes rarely, so run `screenseeker sync` by hand
-when you add films.
+schedules it: the watchlists change rarely, so run `screenseeker sync` by hand
+when someone adds films. One run covers every active member.
+
+---
+
+## The household
+
+Members live in the database, not in config.toml, so **backups are the only
+copy**. `deploy/backup.sh` already covers them — it snapshots the whole file.
+
+Two things to know before you touch the household on a server:
+
+- **Removing a member deletes the films nobody else lists.** That is the point,
+  but it means the order matters when you are fixing up a member: add and sync
+  the replacement first, remove the old one second.
+- **Pausing beats removing** when someone's profile goes private or they are
+  just away. Clear the *Sync* checkbox on the profile page and their entries
+  stay exactly as they are.

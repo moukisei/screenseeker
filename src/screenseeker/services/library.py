@@ -11,16 +11,16 @@ open, so callers never receive a detached ORM instance.
 """
 
 from datetime import UTC, datetime, timedelta
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import case, distinct, func, or_, select
 from sqlalchemy.orm import Session
 
 from .. import settings
-from ..database.models import Film, StreamingOffer
+from ..database.models import Film, Member, StreamingOffer, WatchlistEntry
 from ..logger import get_logger
-from .models import FilmDetail, FilmSummary, OfferOut
+from .models import FilmDetail, FilmSummary, MemberRef, OfferOut
 
 logger = get_logger(__name__)
 
@@ -42,12 +42,30 @@ def get_or_create_film(
     Returns (film, created). Two callers running this concurrently produce
     duplicates, which is why sync and refresh are guarded by the single-flight
     index on the jobs table.
+
+    A year is matched exactly when given, then falls back to a row stored
+    without one. That fallback is what keeps a household from splitting one
+    film in two: Letterboxd omits the year on some entries, so one member's
+    scrape can store "Heat" with no year and another's "Heat (1995)". Without
+    it the second scrape misses the first row and creates a duplicate, which
+    then needs enriching separately and appears twice in the grid.
     """
     query = session.query(Film).filter(Film.letterboxd_title == title)
-    if year is not None:
-        query = query.filter(Film.letterboxd_year == year)
 
-    film = query.first()
+    if year is None:
+        # Nothing to match on: prefer the row that also has no year, then the
+        # oldest, so repeated scrapes keep landing on the same film.
+        film = query.order_by(Film.letterboxd_year.is_(None).desc(), Film.id.asc()).first()
+    else:
+        film = query.filter(Film.letterboxd_year == year).first()
+        if film is None:
+            film = query.filter(Film.letterboxd_year.is_(None)).order_by(Film.id.asc()).first()
+            if film is not None:
+                # Fill in what the earlier scrape could not see.
+                film.letterboxd_year = year
+                session.flush()
+                logger.info(f"Backfilled year {year} onto '{title}' (ID: {film.id})")
+
     if film:
         logger.debug(f"Found existing film: {film.full_title} (ID: {film.id})")
         return film, False
@@ -58,6 +76,132 @@ def get_or_create_film(
 
     logger.info(f"Created new film: {film.full_title} (ID: {film.id})")
     return film, True
+
+
+def record_entry(session: Session, member_id: int, film: Film) -> str:
+    """
+    Note that a member wants a film. Returns "added", "restored" or "existing".
+
+    The unique constraint on (member_id, film_id) makes this an upsert rather
+    than an insert: a film put back on a watchlist reuses its old row, instead
+    of stacking a second entry that would double the member's count.
+    """
+    entry = (
+        session.query(WatchlistEntry)
+        .filter(WatchlistEntry.member_id == member_id, WatchlistEntry.film_id == film.id)
+        .first()
+    )
+
+    now = datetime.now(UTC)
+
+    if entry is None:
+        session.add(WatchlistEntry(member_id=member_id, film_id=film.id, date_added=now))
+        session.flush()
+        _pull_back_date_added(film, now)
+        return "added"
+
+    if entry.removed_at is not None:
+        entry.removed_at = None
+        session.flush()
+        return "restored"
+
+    return "existing"
+
+
+def _pull_back_date_added(film: Film, when: datetime) -> None:
+    """
+    Keep Film.date_added at the earliest date any member added the film.
+
+    The column is denormalised so the "recently added" sort stays a plain
+    column rather than a correlated MIN() per row; this is what keeps it
+    honest when a second member adds a film the first already had.
+    """
+    current = film.date_added
+    if current is None:
+        film.date_added = when
+        return
+
+    # SQLite hands back naive datetimes whatever went in, so both sides are
+    # normalised before comparing; mixing the two raises TypeError.
+    stored = current if current.tzinfo else current.replace(tzinfo=UTC)
+    candidate = when if when.tzinfo else when.replace(tzinfo=UTC)
+
+    if candidate < stored:
+        film.date_added = when
+
+
+def merge_films(session: Session, keep: Film, drop: Film) -> int:
+    """
+    Fold one film row into another and delete the loser. Returns entries moved.
+
+    Two rows can describe one film - Letterboxd omitting a year on one member's
+    entry, a title punctuated differently on another's - and enrichment only
+    finds out when both resolve to the same TMDB id. Before the household
+    existed the collision was flagged and left alone, which meant the losing
+    row never got streaming data and sat in the grid as "nowhere to stream"
+    forever. Now the two rows are the same film wanted by different people, so
+    merging them is both possible and the only correct answer.
+
+    The caller decides which row survives; this moves the entries, keeps the
+    earliest added date, and lets the ORM cascade take the loser's offers.
+    """
+    if keep.id == drop.id:
+        return 0
+
+    existing = {
+        entry.member_id: entry
+        for entry in session.query(WatchlistEntry).filter(WatchlistEntry.film_id == keep.id).all()
+    }
+
+    moved = 0
+    for entry in session.query(WatchlistEntry).filter(WatchlistEntry.film_id == drop.id).all():
+        twin = existing.get(entry.member_id)
+        if twin is None:
+            entry.film_id = keep.id
+            existing[entry.member_id] = entry
+            moved += 1
+            continue
+
+        # The member listed both rows. Keep one entry holding the earlier date,
+        # and treat it as live if either side was - they still want the film.
+        if entry.date_added and (not twin.date_added or entry.date_added < twin.date_added):
+            twin.date_added = entry.date_added
+        if entry.removed_at is None:
+            twin.removed_at = None
+        session.delete(entry)
+
+    if drop.date_added:
+        _pull_back_date_added(keep, drop.date_added)
+
+    session.delete(drop)
+    session.flush()
+
+    logger.info(
+        f"Merged film {drop.id} ('{drop.letterboxd_title}') into {keep.id} "
+        f"('{keep.letterboxd_title}'): {moved} entries moved"
+    )
+    return moved
+
+
+def retire_missing_entries(session: Session, member_id: int, seen_film_ids: set[int]) -> int:
+    """
+    Mark this member's live entries that the latest scrape did not return.
+
+    Soft, and never called on an empty scrape (see `sync.ingest_watchlist`): a
+    partial or failed scrape reading as "your watchlist is empty" would
+    otherwise retire the household's whole list in one run.
+    """
+    query = session.query(WatchlistEntry).filter(
+        WatchlistEntry.member_id == member_id,
+        WatchlistEntry.removed_at.is_(None),
+    )
+    if seen_film_ids:
+        query = query.filter(WatchlistEntry.film_id.notin_(seen_film_ids))
+
+    retired = query.update(
+        {WatchlistEntry.removed_at: datetime.now(UTC)}, synchronize_session=False
+    )
+    return int(retired or 0)
 
 
 def offer_counts(session: Session, film_ids: list[int]) -> dict[int, int]:
@@ -102,10 +246,27 @@ class LibraryFilter(BaseModel):
     offer_type: Optional[str] = None
     watched: Optional[bool] = None
 
+    # Whose watchlists to draw from. A tuple because the model is frozen and
+    # a list would make it unhashable. Empty means everyone.
+    members: tuple[int, ...] = ()
+    # "any" is the union - what at least one of these people wants. "all" is
+    # the intersection, which is the question a household actually asks on a
+    # Friday night: what do we *all* want to see?
+    member_match: Literal["any", "all"] = "any"
+
     @property
     def is_active(self) -> bool:
         """True when anything is being narrowed."""
-        return any(v is not None and v != "" for v in self.model_dump().values())
+        if self.members:
+            return True
+        # member_match alone narrows nothing, so an untouched dropdown does not
+        # light up the Clear link.
+        ignored = {"members", "member_match"}
+        return any(
+            value is not None and value != ""
+            for key, value in self.model_dump().items()
+            if key not in ignored
+        )
 
     def as_params(self) -> dict:
         """
@@ -113,6 +274,13 @@ class LibraryFilter(BaseModel):
 
         Views are bookmarkable, so the URL is the state; this is the one place
         that mapping is written down.
+
+        Every value is a string, including the member selection, which is
+        comma-joined rather than repeated. Pager links are built by merging
+        this dict and running it through Jinja's `urlencode`, which stringifies
+        a list value instead of expanding it - `members=%5B1%2C2%5D`, silently
+        dropping the filter on page two. The route parses both spellings, so
+        the form can still submit `members=1&members=2` the way HTML does.
         """
         params: dict[str, str] = {}
         if self.query:
@@ -125,6 +293,11 @@ class LibraryFilter(BaseModel):
             params["offer_type"] = self.offer_type
         if self.watched is not None:
             params["watched"] = "true" if self.watched else "false"
+        if self.members:
+            params["members"] = ",".join(str(m) for m in self.members)
+            # Only meaningful alongside a selection, and "any" is the default.
+            if self.member_match == "all":
+                params["member_match"] = "all"
         return params
 
 
@@ -143,6 +316,15 @@ _SORT_CONFIDENCE = case(
     else_=6,
 )
 
+# How many people currently want this film. A correlated scalar subquery
+# rather than a JOIN + GROUP BY: joining multiplies rows, and the GROUP BY
+# needed to undo that breaks LIMIT and OFFSET the same way DISTINCT does.
+_WANTED_BY = (
+    select(func.count(WatchlistEntry.id))
+    .where(WatchlistEntry.film_id == Film.id, WatchlistEntry.removed_at.is_(None))
+    .scalar_subquery()
+)
+
 # `col.is_(None)` sorts False before True, which puts unknown values last
 # instead of at the top of a descending sort.
 SORTS: dict[str, tuple] = {
@@ -151,6 +333,9 @@ SORTS: dict[str, tuple] = {
     "year": (_SORT_YEAR.is_(None), _SORT_YEAR.desc()),
     "rating": (Film.vote_average.is_(None), Film.vote_average.desc()),
     "confidence": (_SORT_CONFIDENCE.asc(),),
+    # Consensus first, then rating inside a tie: the point of a shared
+    # watchlist is that what several people want outranks what one does.
+    "wanted": (_WANTED_BY.desc(), Film.vote_average.is_(None), Film.vote_average.desc()),
 }
 DEFAULT_SORT = "added"
 
@@ -184,6 +369,33 @@ def _offer_predicate(filters: LibraryFilter):
     return select(StreamingOffer.id).where(StreamingOffer.film_id == Film.id, *conditions).exists()
 
 
+def _member_predicate(filters: LibraryFilter):
+    """
+    Restrict the grid to the selected members' watchlists.
+
+    "any" is an EXISTS over the selection - the union of those people's lists.
+    "all" counts the distinct members among them who list the film and demands
+    the full set, which is the intersection. Counting distinct member_ids
+    rather than rows matters even with the unique constraint in place: it makes
+    a duplicated selection ("2,2") mean the same thing as "2" instead of
+    matching nothing.
+    """
+    if not filters.members:
+        return None
+
+    ids = set(filters.members)
+    live = (WatchlistEntry.film_id == Film.id, WatchlistEntry.removed_at.is_(None))
+
+    if filters.member_match == "all":
+        return (
+            select(func.count(distinct(WatchlistEntry.member_id)))
+            .where(*live, WatchlistEntry.member_id.in_(ids))
+            .scalar_subquery()
+        ) == len(ids)
+
+    return select(WatchlistEntry.id).where(*live, WatchlistEntry.member_id.in_(ids)).exists()
+
+
 def _narrow(query, filters: LibraryFilter):
     """Apply every active filter. Shared by the count and the page."""
     if filters.query:
@@ -208,12 +420,50 @@ def _narrow(query, filters: LibraryFilter):
     if predicate is not None:
         query = query.filter(predicate)
 
+    members = _member_predicate(filters)
+    if members is not None:
+        query = query.filter(members)
+
     return query
 
 
+def wanted_by(session: Session, film_ids: list[int]) -> dict[int, list[MemberRef]]:
+    """
+    Who currently wants each of these films, in one query.
+
+    The grid draws a chip per member on every card, so this has to be a single
+    join over the page's films rather than a relationship read per row - the
+    same reason `offer_counts` exists. Members are ordered by name so a film's
+    chips do not reshuffle between renders.
+    """
+    if not film_ids:
+        return {}
+
+    rows = (
+        session.query(WatchlistEntry.film_id, Member)
+        .join(Member, Member.id == WatchlistEntry.member_id)
+        .filter(
+            WatchlistEntry.film_id.in_(film_ids),
+            WatchlistEntry.removed_at.is_(None),
+        )
+        .order_by(func.lower(Member.display_name).asc(), Member.id.asc())
+        .all()
+    )
+
+    grouped: dict[int, list[MemberRef]] = {fid: [] for fid in film_ids}
+    for film_id, member in rows:
+        grouped[film_id].append(MemberRef.from_row(member))
+    return grouped
+
+
 def _summarise(session: Session, films: list[Film]) -> list[FilmSummary]:
-    counts = offer_counts(session, [f.id for f in films])
-    return [FilmSummary.from_film(f, offer_count=counts.get(f.id, 0)) for f in films]
+    ids = [f.id for f in films]
+    counts = offer_counts(session, ids)
+    members = wanted_by(session, ids)
+    return [
+        FilmSummary.from_film(f, offer_count=counts.get(f.id, 0), members=members.get(f.id, []))
+        for f in films
+    ]
 
 
 def list_films(
@@ -302,7 +552,12 @@ def get_detail(
 
     total_offers = offer_counts(session, [film_id]).get(film_id, 0)
 
-    return FilmDetail.from_film(film, offers=query.all(), offer_count=total_offers)
+    return FilmDetail.from_film(
+        film,
+        offers=query.all(),
+        offer_count=total_offers,
+        members=wanted_by(session, [film_id]).get(film_id, []),
+    )
 
 
 def offers_for_films(
@@ -370,7 +625,13 @@ def set_watched_by_id(
     logger.info(f"Marked '{film.full_title}' as {'watched' if watched else 'unwatched'}")
 
     counts = offer_counts(session, [film.id])
-    return FilmSummary.from_film(film, offer_count=counts.get(film.id, 0))
+    return FilmSummary.from_film(
+        film,
+        offer_count=counts.get(film.id, 0),
+        # The response replaces the whole card, so without this the chips
+        # disappear the moment anyone marks a film watched.
+        members=wanted_by(session, [film.id]).get(film.id, []),
+    )
 
 
 def stats(session: Session) -> dict:

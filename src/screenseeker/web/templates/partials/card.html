@@ -23,6 +23,26 @@
     </p>
 
     {#
+      Who wants this. Hidden entirely in a one-person household, where the
+      same chip on every card says nothing; `household_size` defaults to 1 so
+      any context that forgets to pass it degrades to the old card rather than
+      to a wall of identical initials.
+
+      The names sit in the group's aria-label rather than in visible text: the
+      chips carry them for a sighted reader, and this is the sentence version.
+    #}
+    {% if film.members and household_size|default(1) > 1 %}
+      <ul class="chips" aria-label="Wanted by {{ film.members|map(attribute='display_name')|join(', ') }}">
+        {% for member in film.members %}
+          <li class="chip" style="--chip: {{ member.color }}" title="{{ member.display_name }}">
+            <span aria-hidden="true">{{ member.initials }}</span>
+            <span class="visually-hidden">{{ member.display_name }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    {#
       One row for both pills, so a card with a ▶ mark is no taller than one
       without: the flex row holds its height whether or not the mark is there.
 

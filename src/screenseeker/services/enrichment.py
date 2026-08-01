@@ -24,7 +24,7 @@ from ..enrichers.tmdb_enricher import TMDBEnricher
 from ..exceptions import ConfigurationError
 from ..logger import get_logger
 from ..user_config import get_tmdb_api_key
-from .library import get_or_create_film, offer_counts
+from .library import get_or_create_film, merge_films, offer_counts
 from .models import FilmSummary
 
 logger = get_logger(__name__)
@@ -273,19 +273,24 @@ def update_film_from_enrichment(session: Session, film: Film, enrichment: Enrich
     tmdb_movie = enrichment.tmdb_movie
 
     # tmdb_id is unique. Writing one that another row already holds would fail
-    # the constraint mid-batch, so flag the collision and leave the row alone.
+    # the constraint mid-batch, so the collision is resolved before the write.
+    #
+    # Two rows resolving to one TMDB id means two members' watchlists spelled
+    # the same film differently - a missing year, different punctuation - so
+    # they are merged rather than flagged. Flagging was the old answer, and it
+    # left the losing row permanently without offers, showing in the grid as
+    # "nowhere to stream" while its twin streamed fine.
     if film.tmdb_id != tmdb_movie.tmdb_id:
         clash = session.query(Film).filter(Film.tmdb_id == tmdb_movie.tmdb_id).first()
         if clash and clash.id != film.id:
-            logger.warning(
-                f"Duplicate film detected: '{film.full_title}' (ID: {film.id}) matches "
-                f"TMDB ID {tmdb_movie.tmdb_id}, already used by '{clash.full_title}' "
-                f"(ID: {clash.id}). Skipping the TMDB update."
+            logger.info(
+                f"'{film.full_title}' (ID: {film.id}) is the same film as "
+                f"'{clash.full_title}' (ID: {clash.id}) - TMDB ID {tmdb_movie.tmdb_id}. Merging."
             )
-            film.match_confidence = "duplicate"
-            film.last_checked = datetime.now(UTC)
-            session.flush()
-            return film
+            # The enriched row survives: it already holds the TMDB id, the
+            # poster and the offers, so keeping it means nothing is refetched.
+            merge_films(session, keep=clash, drop=film)
+            film = clash
 
     _apply_tmdb_fields(film, tmdb_movie)
     film.match_confidence = enrichment.match_confidence

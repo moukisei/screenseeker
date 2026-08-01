@@ -353,8 +353,8 @@ class TestQueryCost:
 
         assert len(films) == 10
         assert total == 30
-        # Count, page, offer counts. Not one per film.
-        assert len(statements) <= 3, f"got {len(statements)} queries"
+        # Count, page, offer counts, member chips. Not one per film.
+        assert len(statements) <= 4, f"got {len(statements)} queries"
 
     def test_a_filtered_page_is_still_a_constant_number_of_queries(self, test_session):
         for i in range(20):
@@ -379,9 +379,9 @@ class TestQueryCost:
 
         assert len(films) == 5
         assert total == 20
-        # Filtering does not add a query per axis, and the offer counts stay
-        # one grouped SELECT.
-        assert len(statements) <= 3, f"got {len(statements)} queries"
+        # Filtering does not add a query per axis; the offer counts and the
+        # member chips stay one grouped SELECT each.
+        assert len(statements) <= 4, f"got {len(statements)} queries"
 
     def test_the_page_query_carries_its_own_limit(self, test_session):
         for i in range(10):

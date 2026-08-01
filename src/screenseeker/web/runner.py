@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from .. import settings, user_config
 from ..database import session as db_session
 from ..logger import get_logger
-from ..services import enrichment, jobs, sync
+from ..services import enrichment, jobs, members, sync
 from ..services.enrichment import build_enricher, enrich_films
 from ..services.jobs import JobOut
 from ..services.sync import build_scraper, ingest_watchlist
@@ -90,7 +90,15 @@ class JobRunner:
 
         with closing(self._session()) as job_session:
             try:
-                cfg = user_config.load_config()
+                # Tolerated rather than required: the household lives in the
+                # database, so a sync needs no config file at all. Refresh
+                # still does, and says so through build_enricher.
+                try:
+                    cfg = user_config.load_config()
+                except Exception as exc:  # noqa: BLE001 - the handler reports what it needs
+                    logger.warning(f"No usable config for job {job_id} ({kind}): {exc}")
+                    cfg = {}
+
                 handlers[kind](job_id, job_session, cfg)
             except Exception as exc:  # noqa: BLE001 - recorded on the job row
                 logger.exception(f"Job {job_id} ({kind}) failed")
@@ -164,41 +172,117 @@ class JobRunner:
         jobs.finish(job_session, job_id, message=summary + ".", error=errors)
 
     def _run_sync(self, job_id: int, job_session: Session, cfg: dict) -> None:
-        # The scrape runs to completion before the first film is saved, so
-        # progress sits at zero for a while. Say so rather than look stuck.
-        jobs.start(
-            job_session, job_id, message="Scraping your watchlist. This takes a few minutes…"
-        )
-        scraper = build_scraper(cfg)
+        """
+        Scrape every active member's watchlist, in one job.
+
+        One job rather than one per member: the partial unique index on `jobs`
+        allows a single active row per kind, so N member jobs would simply
+        reject each other. It is also the right granularity to report - the
+        household syncs or it does not.
+        """
+        jobs.start(job_session, job_id, message="Reading the household…")
 
         with closing(self._session()) as work:
-            report_progress = self._progress_reporter(job_session, job_id, work)
+            household = members.list_members(work, active_only=True)
 
-            with scraper:
-                report: sync.SyncReport = ingest_watchlist(
-                    work,
-                    scraper,
-                    on_progress=lambda done, total: report_progress(
-                        done, total, f"Saving film {done} of {total}"
-                    ),
-                )
-
-            work.commit()
-
-        if not report.success:
+        if not household:
             jobs.fail(
                 job_session,
                 job_id,
-                error=report.error_message or "Scraping failed.",
-                message="Could not read your watchlist.",
+                error="No active members.",
+                message="Add someone on the Profile page, then sync again.",
             )
             return
 
-        jobs.finish(
-            job_session,
-            job_id,
-            message=(
-                f"Scraped {report.scraped} film(s): "
-                f"{report.added} added, {report.existing} already known."
-            ),
+        # Progress counts members, not films: the film total is unknown until
+        # each scrape finishes, and a bar that jumps backwards when the second
+        # person's larger watchlist lands is worse than a coarse one. The
+        # per-film detail rides on the message instead.
+        total_members = len(household)
+        reports: list[sync.SyncReport] = []
+
+        for index, member in enumerate(household, start=1):
+            jobs.report_progress(
+                job_session,
+                job_id,
+                index - 1,
+                total_members,
+                f"Scraping {member.display_name}'s watchlist…",
+            )
+            reports.append(self._sync_member(job_session, job_id, member, index, total_members))
+
+        jobs.report_progress(job_session, job_id, total_members, total_members, "Finishing up…")
+        self._finish_sync(job_session, job_id, sync.HouseholdSyncReport(reports=reports))
+
+    def _sync_member(
+        self,
+        job_session: Session,
+        job_id: int,
+        member: members.MemberOut,
+        index: int,
+        total_members: int,
+    ) -> sync.SyncReport:
+        """
+        One member's scrape. Never raises.
+
+        A private profile, a renamed account or a network failure belongs to
+        that member alone; the other three watchlists still sync, and the
+        failure is reported on the job rather than thrown away.
+        """
+        try:
+            scraper = build_scraper(member.letterboxd_username)
+
+            with closing(self._session()) as work:
+                report_progress = self._progress_reporter(job_session, job_id, work)
+
+                with scraper:
+                    report = ingest_watchlist(
+                        work,
+                        scraper,
+                        member_id=member.id,
+                        member_name=member.display_name,
+                        on_progress=lambda done, total: report_progress(
+                            index - 1,
+                            total_members,
+                            f"{member.display_name}: film {done} of {total}",
+                        ),
+                    )
+
+                work.commit()
+
+            return report
+        except Exception as exc:  # noqa: BLE001 - recorded on the report, not raised
+            logger.exception(f"Sync failed for member {member.letterboxd_username}")
+            return sync.SyncReport(
+                member=member.display_name,
+                scraped=0,
+                success=False,
+                error_message=f"{type(exc).__name__}: {exc}",
+            )
+
+    def _finish_sync(
+        self, job_session: Session, job_id: int, household: sync.HouseholdSyncReport
+    ) -> None:
+        """Turn the per-member reports into one job outcome."""
+        failures = household.failures
+        errors = "\n".join(f"{r.member}: {r.error_message}" for r in failures)
+
+        if not household.success:
+            jobs.fail(
+                job_session,
+                job_id,
+                error=errors or "Scraping failed.",
+                message=f"Could not read any of the {len(household.reports)} watchlist(s).",
+            )
+            return
+
+        summary = (
+            f"Synced {len(household.reports) - len(failures)} watchlist(s): "
+            f"{household.scraped} film(s) seen, {household.new_films} new to the library"
         )
+        if household.removed:
+            summary += f", {household.removed} no longer wanted"
+        if failures:
+            summary += f". {len(failures)} member(s) failed"
+
+        jobs.finish(job_session, job_id, message=summary + ".", error=errors)

@@ -10,7 +10,7 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from screenseeker.cli import cli
-from screenseeker.services import FilmSummary
+from screenseeker.services import FilmSummary, MemberOut
 from screenseeker.services.enrichment import EnrichmentReport, FilmError
 from screenseeker.services.sync import SyncReport
 
@@ -51,7 +51,7 @@ class TestCommandSurface:
 
     @classmethod
     def commands(cls):
-        return {"config", "sync", "refresh", "serve"}
+        return {"config", "members", "sync", "refresh", "serve"}
 
     def test_exposes_only_the_plumbing_commands(self):
         result = CliRunner().invoke(cli, ["--help"])
@@ -90,51 +90,105 @@ class TestConfigCommands:
         assert "database:" in result.output
 
 
+def make_member(member_id=1, username="alice", display_name="Alice"):
+    return MemberOut(id=member_id, letterboxd_username=username, display_name=display_name)
+
+
 class TestSyncCommand:
     def test_help(self):
         assert CliRunner().invoke(cli, ["sync", "--help"]).exit_code == 0
 
-    @patch("screenseeker.cli.user_config.load_config", return_value=MOCK_CFG)
     @patch("screenseeker.cli.init_db")
-    @patch("screenseeker.cli.build_scraper")
     @patch("screenseeker.cli.get_session")
+    @patch("screenseeker.cli.members.list_members", return_value=[make_member()])
+    @patch("screenseeker.cli.build_scraper")
     @patch("screenseeker.cli.ingest_watchlist")
-    def test_reports_counts(self, mock_ingest, mock_session, mock_scraper, mock_init, mock_cfg):
+    def test_reports_counts(self, mock_ingest, mock_scraper, mock_list, mock_session, mock_init):
         mock_ingest.return_value = SyncReport(
-            scraped=10, added=3, existing=7, pages_scraped=2, source="html"
+            member="Alice", scraped=10, added=3, existing=7, new_films=3, pages_scraped=2
         )
 
         result = CliRunner().invoke(cli, ["sync"])
 
         assert result.exit_code == 0
-        assert "Added: 3" in result.output
-        assert "Already known: 7" in result.output
+        assert "10 film(s) seen" in result.output
+        assert "New to the library: 3" in result.output
 
-    @patch(
-        "screenseeker.cli.user_config.load_config",
-        return_value={"letterboxd": {"username": ""}, "tmdb": {}},
-    )
-    def test_requires_username(self, mock_cfg):
+    @patch("screenseeker.cli.init_db")
+    @patch("screenseeker.cli.get_session")
+    @patch("screenseeker.cli.members.list_members", return_value=[])
+    def test_requires_a_member(self, mock_list, mock_session, mock_init):
+        """Nobody to scrape is a setup problem, not an empty result."""
         result = CliRunner().invoke(cli, ["sync"])
         assert result.exit_code == 1
-        assert "username not configured" in result.output
+        assert "members add" in result.output
 
-    @patch("screenseeker.cli.user_config.load_config", return_value=MOCK_CFG)
     @patch("screenseeker.cli.init_db")
-    @patch("screenseeker.cli.build_scraper")
     @patch("screenseeker.cli.get_session")
+    @patch("screenseeker.cli.members.list_members", return_value=[make_member()])
+    @patch("screenseeker.cli.build_scraper")
     @patch("screenseeker.cli.ingest_watchlist")
     def test_scrape_failure_exits_nonzero(
-        self, mock_ingest, mock_session, mock_scraper, mock_init, mock_cfg
+        self, mock_ingest, mock_scraper, mock_list, mock_session, mock_init
     ):
         mock_ingest.return_value = SyncReport(
-            scraped=0, success=False, error_message="Letterboxd returned 503"
+            member="Alice", scraped=0, success=False, error_message="Letterboxd returned 503"
         )
 
         result = CliRunner().invoke(cli, ["sync"])
 
         assert result.exit_code == 1
         assert "503" in result.output
+
+    @patch("screenseeker.cli.init_db")
+    @patch("screenseeker.cli.get_session")
+    @patch(
+        "screenseeker.cli.members.list_members",
+        return_value=[make_member(), make_member(2, "bob", "Bob")],
+    )
+    @patch("screenseeker.cli.build_scraper")
+    @patch("screenseeker.cli.ingest_watchlist")
+    def test_one_bad_account_does_not_sink_the_others(
+        self, mock_ingest, mock_scraper, mock_list, mock_session, mock_init
+    ):
+        """A private or renamed profile costs that member, not the household."""
+        mock_ingest.side_effect = [
+            SyncReport(member="Alice", scraped=0, success=False, error_message="404 not found"),
+            SyncReport(member="Bob", scraped=12, added=12, new_films=12),
+        ]
+
+        result = CliRunner().invoke(cli, ["sync"])
+
+        assert result.exit_code == 0
+        assert "12 film(s) seen" in result.output
+        assert "Failed: 1 member(s)" in result.output
+
+    @patch("screenseeker.cli.init_db")
+    @patch("screenseeker.cli.get_session")
+    @patch(
+        "screenseeker.cli.members.list_members",
+        return_value=[make_member(), make_member(2, "bob", "Bob")],
+    )
+    @patch("screenseeker.cli.build_scraper")
+    @patch("screenseeker.cli.ingest_watchlist")
+    def test_member_option_scrapes_only_that_person(
+        self, mock_ingest, mock_scraper, mock_list, mock_session, mock_init
+    ):
+        mock_ingest.return_value = SyncReport(member="Bob", scraped=5, added=5, new_films=5)
+
+        result = CliRunner().invoke(cli, ["sync", "--member", "bob"])
+
+        assert result.exit_code == 0
+        assert mock_ingest.call_count == 1
+        assert mock_scraper.call_args.args == ("bob",)
+
+    @patch("screenseeker.cli.init_db")
+    @patch("screenseeker.cli.get_session")
+    @patch("screenseeker.cli.members.list_members", return_value=[make_member()])
+    def test_unknown_member_option_exits_nonzero(self, mock_list, mock_session, mock_init):
+        result = CliRunner().invoke(cli, ["sync", "--member", "nobody"])
+        assert result.exit_code == 1
+        assert "No active member" in result.output
 
 
 class TestRefreshCommand:

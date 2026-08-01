@@ -12,6 +12,7 @@ One module until it earns splitting. Rules that hold throughout:
 
 from math import ceil
 from typing import Annotated, Literal, NamedTuple, Optional, get_args
+from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
@@ -21,8 +22,9 @@ from starlette.responses import HTMLResponse, RedirectResponse, Response
 
 from .. import settings
 from ..enrichers.watch_strategy import WatchOption, WatchStrategy
-from ..exceptions import JobAlreadyRunning
+from ..exceptions import ConfigurationError, JobAlreadyRunning
 from ..services import jobs, library
+from ..services import members as member_service
 from ..services import profile as profile_service
 from ..services import watch
 from ..services.models import FilmDetail, OfferOut
@@ -38,7 +40,11 @@ MAX_PER_PAGE = 96
 
 # FastAPI rejects anything outside this set with a 422 before it reaches the
 # query builder, so no user input ever selects an ORDER BY.
-SortKey = Literal["added", "title", "year", "rating", "confidence"]
+SortKey = Literal["added", "wanted", "title", "year", "rating", "confidence"]
+
+# How a member selection combines: the union of those watchlists, or their
+# intersection.
+MemberMatch = Literal["any", "all"]
 
 # The five monetization types TMDB uses. Anything else is a typo, not a filter.
 OfferType = Literal["flatrate", "rent", "buy", "free", "ads"]
@@ -85,11 +91,44 @@ def _country_code(value: object) -> object:
 # Blank -> no filter; a present code is normalised and length-checked.
 CountryCode = BeforeValidator(_country_code)
 
+
+def _member_ids(values: Optional[list[str]]) -> tuple[int, ...]:
+    """
+    Parse the member selection from either spelling, preserving order.
+
+    A checkbox group submits `members=1&members=2`; pager and bookmark links
+    carry `members=1,2`, because Jinja's urlencode stringifies a list value
+    instead of expanding it. Both are accepted so the form and the links agree.
+
+    Anything unparseable is dropped rather than raising: a stale bookmark
+    naming a member who has left the household should show the library, not a
+    422.
+    """
+    if not values:
+        return ()
+
+    ids: list[int] = []
+    for value in values:
+        for part in str(value).split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                parsed = int(part)
+            except ValueError:
+                continue
+            if parsed > 0 and parsed not in ids:
+                ids.append(parsed)
+
+    return tuple(ids)
+
+
 if set(get_args(JobKind)) != set(jobs.KINDS):
     raise RuntimeError(f"job kinds disagree: routes {get_args(JobKind)}, service {jobs.KINDS}")
 
 SORT_LABELS: dict[str, str] = {
     "added": "Recently added",
+    "wanted": "Most wanted",
     "title": "Title",
     "year": "Year",
     "rating": "Rating",
@@ -174,14 +213,18 @@ def index(
     country: Annotated[Optional[str], CountryCode] = None,
     offer_type: Annotated[Optional[OfferType], BlankAsNone] = None,
     watched: Annotated[Optional[bool], BlankAsNone] = None,
+    # Repeatable, so it is declared through Annotated rather than as a default
+    # `Query(...)` call - a list default is what B008 exists to catch.
+    members: Annotated[Optional[list[str]], Query()] = None,
+    member_match: Annotated[Optional[MemberMatch], BlankAsNone] = None,
 ) -> HTMLResponse:
     """
     The grid: filtered, sorted, paginated, all in one query.
 
     Every filter is a query parameter, so "unwatched, on Netflix, available in
-    FR" is a URL you can bookmark and share. HTMX asks for the library block
-    alone; a plain request gets the page, which is why every control also
-    carries a real href.
+    FR, wanted by Alice and Bob" is a URL you can bookmark and share. HTMX asks
+    for the library block alone; a plain request gets the page, which is why
+    every control also carries a real href.
     """
     filters = library.LibraryFilter(
         # Blank form fields arrive as "" and must not narrow anything.
@@ -190,10 +233,13 @@ def index(
         country=country,
         offer_type=offer_type,
         watched=watched,
+        members=_member_ids(members),
+        member_match=member_match or "any",
     )
 
     films, total = library.list_films(db, filters=filters, sort=sort, page=page, per_page=per_page)
     pages = max(1, ceil(total / per_page))
+    household = member_service.list_members(db)
 
     # Everything that identifies this view, for building links that keep it.
     params = {**filters.as_params(), "sort": sort, "per_page": str(per_page)}
@@ -209,6 +255,11 @@ def index(
         "filters": filters,
         "params": params,
         "facets": library.facets(db),
+        # Everyone, not just the active members: a paused member's films are
+        # still in the library, so hiding them from the filter would make those
+        # rows unreachable.
+        "household": household,
+        "household_size": len(household),
         # The "watchable tonight" badge per card, for this page's films only.
         "card_marks": watch.tonight_marks(db, [f.id for f in films], profile=profile),
     }
@@ -258,7 +309,12 @@ def tonight_view(request: Request, db: DbSession, profile: Profile) -> HTMLRespo
     return render(
         request,
         "tonight.html",
-        {"picks": picks, "marks": marks, "base_country": profile["base_country"]},
+        {
+            "picks": picks,
+            "marks": marks,
+            "base_country": profile["base_country"],
+            "household_size": member_service.count_members(db),
+        },
     )
 
 
@@ -289,6 +345,7 @@ def stale_view(
             "per_page": per_page,
             "ttl_days": settings.CACHE_TTL_DAYS,
             "latest_job": jobs.latest(db, kind="refresh"),
+            "household_size": member_service.count_members(db),
         },
     )
 
@@ -325,7 +382,17 @@ def toggle_watched(
         # Recompute the mark so the returned card keeps its "watchable tonight"
         # badge instead of losing it until the next page load.
         mark = watch.tonight_marks(db, [film_id], profile=profile).get(film_id)
-        return render(request, "partials/card.html", {"film": updated, "mark": mark})
+        return render(
+            request,
+            "partials/card.html",
+            {
+                "film": updated,
+                "mark": mark,
+                # Without this the card comes back stripped of its chips, so
+                # marking a film watched would look like it lost its owners.
+                "household_size": member_service.count_members(db),
+            },
+        )
 
     return RedirectResponse(url=f"/film/{film_id}", status_code=303)
 
@@ -391,15 +458,94 @@ def job_status(request: Request, job_id: int, db: DbSession) -> HTMLResponse:
 
 
 @router.get("/profile", response_class=HTMLResponse)
-def profile_form(request: Request) -> HTMLResponse:
+def profile_form(request: Request, db: DbSession, error: Optional[str] = None) -> HTMLResponse:
     """
-    The profile editor.
+    The profile editor: the household, and the subscriptions it shares.
 
     Reads config from disk, not the request-scoped `get_profile`: this edits
     the raw stored shape (available_countries can be "all"), which the resolved
-    profile flattens.
+    profile flattens. Members are not in that file - they are rows - so they
+    are read separately.
     """
-    return render(request, "profile.html", {"form": profile_service.load_form()})
+    return render(
+        request,
+        "profile.html",
+        {
+            "form": profile_service.load_form(),
+            "household": member_service.list_members(db),
+            "member_error": error,
+        },
+    )
+
+
+# ==============================================================================
+# The household
+#
+# Members are watchlist sources, not logins: there is still one password and
+# one subscription profile for the whole house. Every route here mutates, so
+# every one is a POST behind require_user.
+# ==============================================================================
+
+
+@router.post("/members", dependencies=[Depends(require_user)])
+def add_member(
+    db: DbSession,
+    username: str = Form(...),
+    display_name: str = Form(""),
+    color: str = Form(""),
+) -> Response:
+    """Add a Letterboxd account to the household."""
+    try:
+        member_service.create_member(db, username, display_name=display_name, color=color or None)
+    except ConfigurationError as bad:
+        # Redirect rather than render: the profile page is a plain form post,
+        # and re-rendering here would leave a URL that reposts on reload.
+        db.rollback()
+        return RedirectResponse(url=f"/profile?error={quote(str(bad))}", status_code=303)
+
+    db.commit()
+    return RedirectResponse(url="/profile?saved=1", status_code=303)
+
+
+@router.post("/members/{member_id}", dependencies=[Depends(require_user)])
+def edit_member(
+    db: DbSession,
+    member_id: int,
+    display_name: str = Form(""),
+    color: str = Form(""),
+    active: str = Form(""),
+) -> Response:
+    """
+    Rename a member, recolour their chip, or pause their syncing.
+
+    `active` is read as presence, not as a parsed bool: an unchecked checkbox
+    submits nothing at all, so an absent field means paused. Each member has
+    their own form carrying every field, which is what makes that safe.
+    """
+    updated = member_service.update_member(
+        db, member_id, display_name=display_name, color=color, active=bool(active)
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="No such member.")
+
+    db.commit()
+    return RedirectResponse(url="/profile?saved=1", status_code=303)
+
+
+@router.post("/members/{member_id}/delete", dependencies=[Depends(require_user)])
+def remove_member(db: DbSession, member_id: int) -> Response:
+    """
+    Remove a member, their entries, and any film nobody else listed.
+
+    Dropping those films is deliberate: a film only this person wanted is not
+    the household's any more, and keeping it would leave the library a
+    graveyard with no way to tell the orphans apart.
+    """
+    if member_service.delete_member(db, member_id) is None:
+        raise HTTPException(status_code=404, detail="No such member.")
+
+    db.commit()
+    return RedirectResponse(url="/profile?saved=1", status_code=303)
 
 
 @router.get("/profile/subscription", response_class=HTMLResponse)

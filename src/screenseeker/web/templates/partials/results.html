@@ -32,8 +32,15 @@
     {% elif total %}
       Nothing on this page. <a href="/?sort={{ sort }}">Back to the start.</a>
     {% else %}
-      Your library is empty. Run <code>screenseeker sync</code>, then
-      <code>screenseeker refresh</code>.
+      {# Nothing to sync is the more common first-run state than nothing
+         synced, so it gets the more useful sentence. #}
+      {% if not household %}
+        Nobody in the household yet. Add a Letterboxd account on the
+        <a href="/profile">profile page</a>, then sync.
+      {% else %}
+        Your library is empty. Sync the watchlists above, then refresh
+        availability.
+      {% endif %}
     {% endif %}
   </p>
 {% endif %}

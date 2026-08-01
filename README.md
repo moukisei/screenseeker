@@ -1,14 +1,17 @@
 # ScreenSeeker 🎬
 
-Find where to watch the films on your Letterboxd watchlist, ranked by what you
-already pay for.
+Find where to watch the films on your household's Letterboxd watchlists, ranked
+by what you already pay for.
 
-ScreenSeeker takes three things — your Letterboxd watchlist, your streaming
+ScreenSeeker takes three things — everyone's Letterboxd watchlist, your streaming
 subscriptions, and (optionally) which countries your VPN can reach — and answers
-the only question that matters on a given evening: *what can I actually watch
-tonight, without paying for anything new?* It pulls your watchlist, looks up
+the only question that matters on a given evening: *what can we actually watch
+tonight, without paying for anything new?* It pulls each watchlist, looks up
 each film's streaming availability per country from TMDB, and matches that
 against your subscriptions, flagging the ones that are one click from playing.
+
+Watchlists are **combined, not merged away**. The same film on three lists is
+one card with three chips, and *Most wanted* puts what everyone agrees on first.
 
 The primary interface is a **web app**. The CLI exists to set the tool up and
 keep the local mirror fresh; browsing, searching and filtering all live in the
@@ -18,7 +21,8 @@ browser.
 
 ## How it works
 
-1. **`sync`** scrapes your Letterboxd watchlist into a local SQLite database.
+1. **`sync`** scrapes every member's Letterboxd watchlist into a local SQLite
+   database, deduplicating films across them.
 2. **`refresh`** asks TMDB, per film, where it streams in every country and how
    long it runs, caching the answer for 7 days.
 3. The **web app** reads that cache and, against your subscription profile,
@@ -34,17 +38,19 @@ so the grid is instant. Only `sync` and `refresh` reach out.
 
 Start it with `screenseeker serve` and open `http://127.0.0.1:8000`. The pages:
 
-- **Library** (`/`) — the whole watchlist as a poster grid. Filter by provider,
-  country, offer type and watched state, sort, and search by title as you type.
-  Every filter is a query parameter, so any view is a bookmarkable URL. Each
-  card shows year, rating, runtime, a "watchable tonight" badge when one applies,
-  and a one-click **Mark watched** toggle.
+- **Library** (`/`) — the whole household's watchlist as a poster grid. Filter
+  by provider, country, offer type, watched state and **whose list it is on**
+  (any of them, or all of them), sort, and search by title as you type. Every
+  filter is a query parameter, so any view is a bookmarkable URL. Each card
+  shows year, rating, runtime, a chip per person who wants it, a "watchable
+  tonight" badge when one applies, and a one-click **Mark watched** toggle.
 - **Tonight** (`/tonight`) — only the films you can watch right now: unwatched,
   in your base country, no VPN. The actual product.
 - **Stale** (`/stale`) — films whose streaming data has aged past the cache TTL,
   with a button to refresh them.
-- **Profile** (`/profile`) — edit your base country, subscriptions and VPN
-  settings in the browser instead of the CLI wizard.
+- **Profile** (`/profile`) — manage the household (add, rename, recolour, pause
+  or remove a member) and edit your base country, subscriptions and VPN settings
+  in the browser instead of the CLI wizard.
 - **Film detail** (`/film/{id}`) — every way to watch one film, including VPN
   suggestions ranked by your country priority.
 
@@ -74,10 +80,14 @@ cd screenseeker
 pip install -e '.[web]'
 
 # One-time interactive setup: Letterboxd username, base country, TMDB key,
-# and your streaming subscriptions.
+# and your streaming subscriptions. Adds you as the first household member.
 screenseeker config init
 
-# Pull your watchlist, then fetch availability + runtimes.
+# Add everyone else who shares the television.
+screenseeker members add partner --name "Sam"
+screenseeker members add flatmate --name "Alex"
+
+# Pull every watchlist, then fetch availability + runtimes.
 screenseeker sync
 screenseeker refresh
 
@@ -99,7 +109,10 @@ The CLI is plumbing: set up, keep fresh, serve.
 | `screenseeker config init` | Interactive first-time setup wizard. |
 | `screenseeker config edit` | Open the config file in `$EDITOR`. |
 | `screenseeker config path` | Print where the config and database live. |
-| `screenseeker sync` | Scrape the Letterboxd watchlist into the database. Adds new films. |
+| `screenseeker members list` | Show the household, film counts and last sync. |
+| `screenseeker members add <username>` | Add a Letterboxd account (`--name` sets the display name). |
+| `screenseeker members remove <username>` | Remove a member, their entries, and films nobody else wants. |
+| `screenseeker sync` | Scrape every member's watchlist. `--member <username>` does just one. |
 | `screenseeker refresh` | Fetch TMDB availability + runtime for films whose cache is stale. |
 | `screenseeker serve` | Start the web app (`--host`, `--port`, `--reload`). |
 
@@ -114,10 +127,40 @@ whole library — use `screenseeker refresh --days 0`. Other flags: `--limit N`
 
 ---
 
+## The household
+
+A member is **a Letterboxd account to scrape, not a login**. There is still one
+password for the whole app and one set of subscriptions, because a household
+shares a television and a Netflix account. The only thing that varies per person
+is which films they want.
+
+That has a few consequences worth knowing:
+
+- **Films are shared.** Three people wanting *Heat* is one row and three
+  entries, so TMDB enrichment — the slow, rate-limited part — is paid once.
+- **Dropping a film from your watchlist un-wants it, it does not delete it.**
+  The entry is retired; the film stays for anyone else who lists it, and comes
+  back with its original date if you add it again.
+- **A scrape that returns nothing changes nothing.** A rate limit or a login
+  wall reads as "your watchlist is empty", so entries stand until a scrape that
+  actually read something disagrees with them.
+- **`watched` is household-level.** One television, one "we have seen this".
+  Per-person viewing history is Letterboxd's diary, deliberately not duplicated
+  here.
+- **Removing a member takes the films nobody else wanted.** Anything another
+  member still lists is untouched, enrichment included.
+
+Pausing a member (the *Sync* checkbox on the profile page) stops scraping them
+without touching their entries — useful when someone's profile goes private.
+
+---
+
 ## Configuration
 
 Setup writes a TOML file (default `~/.config/screenseeker/config.toml`) holding
-your Letterboxd username, TMDB key, base country and subscriptions:
+your TMDB key, base country and subscriptions. The household lives in the
+database, not here, so the web UI can edit it too — `[letterboxd].username` is
+kept only to seed the first member:
 
 ```toml
 [letterboxd]
@@ -204,7 +247,9 @@ with a free DuckDNS domain, see
   migrations (`alembic upgrade head`).
 - **TMDB** for availability, ratings and runtime, fetched once per film per
   refresh (a details call with providers appended) and cached.
-- **Letterboxd** watchlist import via HTML scraping.
+- **Letterboxd** watchlist import via HTML scraping, one member at a time.
+- **Films are deduplicated across members** and joined to them through
+  `watchlist_entries`, so enrichment cost does not scale with household size.
 
 ```
 src/screenseeker/

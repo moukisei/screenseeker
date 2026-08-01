@@ -28,9 +28,9 @@ from . import config, settings, user_config
 from .database import get_session, init_db
 from .exceptions import ConfigurationError
 from .logger import get_logger, setup_logger
-from .services import enrichment, ingest_watchlist
+from .services import enrichment, ingest_watchlist, members
 from .services.enrichment import build_enricher, enrich_films
-from .services.sync import build_scraper
+from .services.sync import HouseholdSyncReport, SyncReport, build_scraper
 
 setup_logger(level=config.LOG_LEVEL, log_to_file=config.LOG_TO_FILE, use_colors=True)
 logger = get_logger(__name__)
@@ -150,6 +150,9 @@ def config_init():
 
     user_config.save_config(
         {
+            # Kept so an install upgraded from the single-user version still
+            # has the name that seeded its first member. The household itself
+            # lives in the database - see `screenseeker members`.
             "letterboxd": {"username": username},
             "tmdb": {"api_key": api_key, "rate_limit": 5.0, "language": "en-US"},
             "profile": {
@@ -161,6 +164,17 @@ def config_init():
         }
     )
     click.secho(f"\n✓ Saved to {user_config.CONFIG_PATH}", fg="green")
+
+    init_db()
+    with get_session() as session:
+        if members.get_by_username(session, username) is None:
+            try:
+                members.create_member(session, username)
+                click.secho(f"✓ Added {username} to the household", fg="green")
+            except ConfigurationError as e:
+                click.secho(f"⚠️  Could not add {username}: {e}", fg="yellow")
+
+    click.echo("\nAdd anyone else with `screenseeker members add <username>`.")
     click.echo("Next: screenseeker sync")
 
 
@@ -182,48 +196,174 @@ def path():
 
 
 # ==============================================================================
+# The household
+#
+# A member is a Letterboxd account to scrape, not a login: the app still has
+# one password and one subscription profile. These live in the database rather
+# than the config file, so the web UI can edit them too.
+# ==============================================================================
+
+
+@cli.group(name="members")
+def members_group():
+    """Manage whose watchlists are combined."""
+    pass
+
+
+@members_group.command(name="list")
+def members_list():
+    """Show the household."""
+    init_db()
+    with get_session() as session:
+        household = members.list_members(session)
+
+    if not household:
+        click.echo("Nobody yet. Add one with `screenseeker members add <username>`.")
+        return
+
+    for member in household:
+        state = "" if member.active else "  (paused)"
+        synced = (
+            f"synced {member.last_synced_at:%Y-%m-%d}" if member.last_synced_at else "never synced"
+        )
+        click.echo(
+            f"  {member.display_name}  ({member.letterboxd_username})  "
+            f"{member.film_count} film(s), {synced}{state}"
+        )
+
+
+@members_group.command(name="add")
+@click.argument("username")
+@click.option("--name", "-n", "display_name", default="", help="Name shown on the cards")
+def members_add(username, display_name):
+    """Add a Letterboxd account to the household."""
+    init_db()
+    try:
+        with get_session() as session:
+            member = members.create_member(session, username, display_name=display_name)
+    except ConfigurationError as e:
+        click.secho(f"❌ {e}", fg="red")
+        sys.exit(1)
+
+    click.secho(f"✓ Added {member.display_name} ({member.letterboxd_username})", fg="green")
+    click.echo(f"\nNext: screenseeker sync --member {member.letterboxd_username}")
+
+
+@members_group.command(name="remove")
+@click.argument("username")
+@click.option("--yes", "-y", is_flag=True, help="Skip the confirmation prompt")
+def members_remove(username, yes):
+    """
+    Remove a member, their entries, and any film nobody else wants.
+
+    Films another member still lists are untouched, enrichment included.
+    """
+    init_db()
+    with get_session() as session:
+        row = members.get_by_username(session, username)
+        if row is None:
+            click.secho(f"❌ No member '{username}'.", fg="red")
+            sys.exit(1)
+
+        member_id, name = row.id, row.display_name
+
+    if not yes and not click.confirm(f"Remove {name}? Films nobody else wants go too."):
+        click.echo("Cancelled.")
+        return
+
+    with get_session() as session:
+        report = members.delete_member(session, member_id)
+
+    click.secho(
+        f"✓ Removed {report.display_name}: {report.entries_removed} entries, "
+        f"{report.films_removed} film(s) nobody else wanted",
+        fg="green",
+    )
+
+
+# ==============================================================================
 # Keeping the mirror fresh
 # ==============================================================================
 
 
 @cli.command()
-def sync():
+@click.option("--member", "-m", "only", help="Sync one member by Letterboxd username")
+def sync(only):
     """
-    Pull your Letterboxd watchlist into the local database.
+    Pull every member's Letterboxd watchlist into the local database.
 
-    Adds films that are new to the watchlist. Streaming availability is
-    fetched separately by `screenseeker refresh`.
+    Watchlists are combined: the same film on three lists is one row wanted by
+    three people. Films dropped from a watchlist stop counting; nothing is
+    deleted. Streaming availability is fetched separately by
+    `screenseeker refresh`.
     """
-    cfg = _load_config_or_exit()
-    scraper = _build_or_exit(build_scraper, cfg)
-
     init_db()
-    click.echo(f"📡 Scraping {user_config.get_letterboxd_username(cfg)}'s watchlist...")
 
-    try:
-        with scraper, get_session() as session:
-            report = ingest_watchlist(session, scraper)
-    except KeyboardInterrupt:
-        click.echo("\n\nCancelled")
-        sys.exit(0)
-    except Exception as e:
-        click.secho(f"❌ Error: {e}", fg="red")
+    with get_session() as session:
+        household = members.list_members(session, active_only=True)
+
+    if only:
+        household = [m for m in household if m.letterboxd_username == only.strip().lower()]
+        if not household:
+            click.secho(f"❌ No active member '{only}'. See `screenseeker members list`.", fg="red")
+            sys.exit(1)
+
+    if not household:
+        click.secho(
+            "❌ No members yet. Add one with `screenseeker members add <username>`.", fg="red"
+        )
         sys.exit(1)
 
-    if not report.success:
-        click.secho(f"❌ Scraping failed: {report.error_message}", fg="red")
+    reports = []
+    for member in household:
+        click.echo(f"📡 Scraping {member.display_name} ({member.letterboxd_username})...")
+        try:
+            scraper = build_scraper(member.letterboxd_username)
+            with scraper, get_session() as session:
+                report = ingest_watchlist(
+                    session,
+                    scraper,
+                    member_id=member.id,
+                    member_name=member.display_name,
+                )
+        except KeyboardInterrupt:
+            click.echo("\n\nCancelled")
+            sys.exit(0)
+        except Exception as e:
+            # One bad account must not cost the other watchlists their sync.
+            click.secho(f"  ❌ {e}", fg="red")
+            reports.append(
+                SyncReport(
+                    member=member.display_name, scraped=0, success=False, error_message=str(e)
+                )
+            )
+            continue
+
+        reports.append(report)
+
+        if not report.success:
+            click.secho(f"  ❌ {report.error_message}", fg="red")
+        elif report.scraped == 0:
+            click.secho("  ⚠️  No films found — entries left as they were", fg="yellow")
+        else:
+            click.echo(
+                f"  ✓ {report.scraped} film(s): {report.added} added, "
+                f"{report.restored} restored, {report.removed} removed"
+            )
+
+    household_report = HouseholdSyncReport(reports=reports)
+
+    if not household_report.success:
+        click.secho("\n❌ Every watchlist failed.", fg="red", bold=True)
         sys.exit(1)
 
-    if report.scraped == 0:
-        click.secho("⚠️  No films found", fg="yellow")
-        return
+    click.secho(f"\n✅ {household_report.scraped} film(s) seen", fg="green", bold=True)
+    click.echo(f"  • New to the library: {household_report.new_films}")
+    click.echo(f"  • No longer wanted: {household_report.removed}")
+    if household_report.failures:
+        click.secho(f"  • Failed: {len(household_report.failures)} member(s)", fg="yellow")
 
-    click.secho(f"\n✅ Scraped {report.scraped} films", fg="green", bold=True)
-    click.echo(f"  • Added: {report.added} new")
-    click.echo(f"  • Already known: {report.existing}")
-    click.echo(f"  • Pages: {report.pages_scraped}")
-
-    if report.added:
+    if household_report.new_films:
         click.echo("\nNext: screenseeker refresh")
 
 

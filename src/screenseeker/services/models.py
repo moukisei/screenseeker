@@ -8,12 +8,26 @@ after the database session closes.
 
 from datetime import UTC, datetime
 from typing import Optional
+from zlib import crc32
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .. import settings
-from ..database.models import Film
+from ..database.models import Film, Member
 from ..database.models import StreamingOffer as OfferRow
+
+# Chip colours, handed out in order as members are added. Chosen to stay
+# distinguishable against both the light and dark card background; after six
+# members they repeat, which is fine for a household. Lives here because both
+# the chip and the member editor need it, and this module is what they share.
+MEMBER_PALETTE = [
+    "#e0546c",
+    "#4c9be8",
+    "#48b884",
+    "#e0a13a",
+    "#a67ce0",
+    "#4fb3c4",
+]
 
 
 def poster_url(poster_path: Optional[str], size: str = settings.TMDB_POSTER_SIZE) -> Optional[str]:
@@ -28,6 +42,54 @@ def logo_url(logo_path: Optional[str], size: str = settings.TMDB_LOGO_SIZE) -> O
     if not logo_path:
         return None
     return f"{settings.TMDB_IMAGE_BASE}/{size}{logo_path}"
+
+
+def member_initials(display_name: str) -> str:
+    """One or two letters for a member chip."""
+    parts = [p for p in display_name.split() if p]
+    if not parts:
+        return "?"
+    if len(parts) == 1:
+        return parts[0][:2].upper()
+    return (parts[0][0] + parts[-1][0]).upper()
+
+
+def member_color(color: Optional[str], username: str) -> str:
+    """
+    A member's chip colour, derived from the username when none is stored.
+
+    crc32 rather than hash(): Python randomises string hashing per process, so
+    a member with no stored colour would change colour on every restart.
+    """
+    if color:
+        return color
+    return MEMBER_PALETTE[crc32(username.encode()) % len(MEMBER_PALETTE)]
+
+
+class MemberRef(BaseModel):
+    """
+    A member as a card chip: who wants this film.
+
+    Deliberately smaller than MemberOut - the grid renders one of these per
+    member per card, and none of the editing fields are on the hot path.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: int
+    display_name: str
+    initials: str
+    color: str
+
+    @classmethod
+    def from_row(cls, member: Member) -> "MemberRef":
+        """Build from an ORM row. Must be called while the session is open."""
+        return cls(
+            id=member.id,
+            display_name=member.display_name,
+            initials=member_initials(member.display_name),
+            color=member_color(member.color, member.letterboxd_username),
+        )
 
 
 class OfferOut(BaseModel):
@@ -99,6 +161,15 @@ class FilmSummary(BaseModel):
     last_checked: Optional[datetime] = None
     cache_age_days: Optional[int] = None
 
+    members: list[MemberRef] = Field(
+        default_factory=list, description="Who currently has this on their watchlist"
+    )
+
+    @property
+    def wanted_by(self) -> int:
+        """How many people want this. The number the household ranks by."""
+        return len(self.members)
+
     @property
     def poster(self) -> Optional[str]:
         """Full URL for the poster image."""
@@ -110,13 +181,19 @@ class FilmSummary(BaseModel):
         return self.cache_age_days is None or self.cache_age_days > settings.CACHE_TTL_DAYS
 
     @classmethod
-    def from_film(cls, film: Film, *, offer_count: Optional[int] = None) -> "FilmSummary":
+    def from_film(
+        cls,
+        film: Film,
+        *,
+        offer_count: Optional[int] = None,
+        members: Optional[list[MemberRef]] = None,
+    ) -> "FilmSummary":
         """
         Build from an ORM row. Must be called while the session is open.
 
-        Always pass offer_count in a list context. Omitting it reads
-        film.streaming_offers, which lazy-loads once per row - 182 queries for
-        a 181-film library.
+        Always pass offer_count and members in a list context. Omitting either
+        reads a relationship, which lazy-loads once per row - 182 queries for a
+        181-film library. `library.wanted_by` loads them for a whole page.
         """
         last_checked = film.last_checked
         age_days = None
@@ -142,6 +219,15 @@ class FilmSummary(BaseModel):
             offer_count=offer_count if offer_count is not None else len(film.streaming_offers),
             last_checked=last_checked,
             cache_age_days=age_days,
+            members=(
+                members
+                if members is not None
+                else [
+                    MemberRef.from_row(entry.member)
+                    for entry in film.watchlist_entries
+                    if entry.removed_at is None
+                ]
+            ),
         )
 
 
@@ -186,6 +272,7 @@ class FilmDetail(FilmSummary):
         *,
         offers: Optional[list[OfferRow]] = None,
         offer_count: Optional[int] = None,
+        members: Optional[list[MemberRef]] = None,
     ) -> "FilmDetail":
         """
         Build from an ORM row and the offer rows to display.
@@ -198,7 +285,9 @@ class FilmDetail(FilmSummary):
         rows = film.streaming_offers if offers is None else offers
         out = [OfferOut.from_row(row) for row in rows]
         summary = FilmSummary.from_film(
-            film, offer_count=offer_count if offer_count is not None else len(out)
+            film,
+            offer_count=offer_count if offer_count is not None else len(out),
+            members=members,
         )
 
         return cls(

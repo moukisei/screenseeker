@@ -55,6 +55,37 @@
       </select>
     </label>
 
+    {#
+      Whose watchlists to draw from. Hidden for a one-person household, where
+      it can only ever narrow to what is already shown.
+
+      Checkboxes rather than a multi-select: this is the control the household
+      actually reaches for, and a <select multiple> hides its own state behind
+      a scroll box. Each box carries the member's colour, so the filter and the
+      card chips read as the same thing.
+    #}
+    {% if household and household|length > 1 %}
+      <fieldset class="filters__members">
+        <legend>Wanted by</legend>
+
+        <div class="filters__chips">
+          {% for member in household %}
+            <label class="filter-chip" style="--chip: {{ member.chip_color }}">
+              <input type="checkbox" name="members" value="{{ member.id }}"
+                     {% if member.id in filters.members %}checked{% endif %}>
+              <span>{{ member.display_name }}</span>
+            </label>
+          {% endfor %}
+        </div>
+
+        {# Union or intersection. "All of them" is the movie-night question. #}
+        <select name="member_match" aria-label="How to combine the selected people">
+          <option value="any" {% if filters.member_match == 'any' %}selected{% endif %}>any of them</option>
+          <option value="all" {% if filters.member_match == 'all' %}selected{% endif %}>all of them</option>
+        </select>
+      </fieldset>
+    {% endif %}
+
     <label>
       Watched
       <select name="watched">

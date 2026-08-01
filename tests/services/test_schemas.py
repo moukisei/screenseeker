@@ -202,8 +202,9 @@ class TestQueryCounts:
 
         assert len(summaries) == 12
         assert all(s.offer_count == 2 for s in summaries)
-        # One SELECT for the films, one grouped count for the offers.
-        assert len(statements) <= 3, f"expected a constant number of queries, got {len(statements)}"
+        # One SELECT for the films, one grouped count for the offers, one
+        # join for the member chips.
+        assert len(statements) <= 4, f"expected a constant number of queries, got {len(statements)}"
 
     def test_empty_listing_skips_the_offer_count_query(self, test_session):
         summaries, statements = self.count_queries(

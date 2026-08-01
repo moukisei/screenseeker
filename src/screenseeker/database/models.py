@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, relationship
@@ -64,8 +65,13 @@ class Film(Base):
     year_mismatch: Mapped[bool] = Column(Boolean, default=False)  # Flag for year discrepancies
 
     # Watchlist metadata
-    date_added: Mapped[datetime] = Column(DateTime, nullable=False)  # When added to watchlist
-    watched: Mapped[bool] = Column(Boolean, default=False)  # Track if watched
+    # The earliest date any member added this film. Per-member dates live on
+    # WatchlistEntry; this is denormalised so the "recently added" sort stays a
+    # plain column and does not need a correlated MIN() per row.
+    date_added: Mapped[datetime] = Column(DateTime, nullable=False)
+    # Household-level: one television, one "we have seen this". Per-person
+    # viewing history is Letterboxd's diary, deliberately not modelled here.
+    watched: Mapped[bool] = Column(Boolean, default=False)
     watched_at: Mapped[Optional[datetime]] = Column(DateTime, nullable=True)
     notes: Mapped[Optional[str]] = Column(Text, nullable=True)  # Personal notes
 
@@ -85,6 +91,9 @@ class Film(Base):
     # Relationships
     streaming_offers: Mapped[List["StreamingOffer"]] = relationship(
         "StreamingOffer", back_populates="film", cascade="all, delete-orphan"
+    )
+    watchlist_entries: Mapped[List["WatchlistEntry"]] = relationship(
+        "WatchlistEntry", back_populates="film", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:
@@ -109,6 +118,96 @@ class Film(Base):
         if year:
             return f"{self.display_title} ({year})"
         return self.display_title
+
+
+class Member(Base):
+    """
+    One person in the household, identified by their Letterboxd account.
+
+    A member is a *watchlist source*, not a login. The whole app still sits
+    behind one shared password and one shared subscription profile, because a
+    household shares a television and a Netflix account; what differs between
+    people is only which films they want to see.
+    """
+
+    __tablename__ = "members"
+
+    id: Mapped[int] = Column(Integer, primary_key=True, autoincrement=True)
+
+    # The sync key. Unique because two members scraping the same account would
+    # write the same entries twice and double every "wanted by" count.
+    letterboxd_username: Mapped[str] = Column(String, nullable=False, unique=True, index=True)
+    display_name: Mapped[str] = Column(String, nullable=False)
+
+    # Chip colour in the grid, as a CSS colour. Null lets the template fall
+    # back to a hash of the name, so a member is never invisible.
+    color: Mapped[Optional[str]] = Column(String, nullable=True)
+
+    # An inactive member stops being scraped but keeps their entries, so
+    # pausing someone does not silently drop films from the household list.
+    active: Mapped[bool] = Column(Boolean, nullable=False, default=True)
+
+    created_at: Mapped[datetime] = Column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    # Null until the first successful scrape of this member's watchlist.
+    last_synced_at: Mapped[Optional[datetime]] = Column(DateTime, nullable=True)
+
+    entries: Mapped[List["WatchlistEntry"]] = relationship(
+        "WatchlistEntry", back_populates="member", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Member(id={self.id}, username='{self.letterboxd_username}')>"
+
+
+class WatchlistEntry(Base):
+    """
+    One member wants one film. The join that makes the library a household's.
+
+    Films are deduplicated across members - three people wanting the same film
+    is one Film row and three entries - so the expensive part, TMDB enrichment,
+    is paid once rather than per person.
+    """
+
+    __tablename__ = "watchlist_entries"
+
+    id: Mapped[int] = Column(Integer, primary_key=True, autoincrement=True)
+
+    member_id: Mapped[int] = Column(
+        Integer, ForeignKey("members.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    film_id: Mapped[int] = Column(
+        Integer, ForeignKey("films.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # When this member added the film to their own watchlist.
+    date_added: Mapped[datetime] = Column(DateTime, nullable=False)
+
+    # Set when a sync no longer finds the film on this member's watchlist.
+    # Soft rather than hard: a scrape that returns a partial list (a rate limit
+    # mid-run, a changed page layout) would otherwise erase real entries, and
+    # the row is worth keeping so a re-add restores the original date.
+    removed_at: Mapped[Optional[datetime]] = Column(DateTime, nullable=True)
+
+    created_at: Mapped[datetime] = Column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+    member: Mapped["Member"] = relationship("Member", back_populates="entries")
+    film: Mapped["Film"] = relationship("Film", back_populates="watchlist_entries")
+
+    __table_args__ = (
+        # One row per (member, film). A member either wants a film or does not;
+        # re-adding flips removed_at back to NULL rather than inserting again.
+        UniqueConstraint("member_id", "film_id", name="uq_entry_member_film"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<WatchlistEntry(member_id={self.member_id}, film_id={self.film_id}, "
+            f"removed={self.removed_at is not None})>"
+        )
 
 
 class StreamingOffer(Base):
@@ -209,6 +308,10 @@ Index(
 )
 Index("idx_offers_checked_at", StreamingOffer.checked_at)
 Index("idx_films_title_year", Film.letterboxd_title, Film.letterboxd_year)
+
+# Every library query filters entries to the ones not removed, and the grid
+# counts them per film. Both read this index rather than the table.
+Index("idx_entries_film_live", WatchlistEntry.film_id, WatchlistEntry.removed_at)
 
 # The single-flight guard, as a constraint rather than an application check.
 # Two requests can both read "nothing is running" before either inserts, and

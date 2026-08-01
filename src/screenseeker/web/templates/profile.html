@@ -6,13 +6,96 @@
 <section class="profile">
   <h1>Profile</h1>
   <p class="tonight__lede">
-    Your subscriptions and preferences. Everything here feeds the watch
-    strategy — Tonight and every film's best option are computed from it.
+    The household, and the subscriptions it shares. Everything below the
+    members feeds the watch strategy — Tonight and every film's best option
+    are computed from it.
   </p>
 
   {% if request.query_params.get('saved') %}
     <p class="flash">Saved.</p>
   {% endif %}
+  {% if member_error %}
+    <p class="flash flash--error">{{ member_error }}</p>
+  {% endif %}
+
+  {#
+    The household. Its own forms, not part of the profile form below: members
+    are rows in the database and the profile is a file on disk, and nesting
+    forms is not legal HTML anyway.
+
+    A member is a watchlist to scrape, not a login. There is still one password
+    for the whole app and one set of subscriptions, because a household shares
+    a television.
+  #}
+  <div class="profile-members">
+    <h2>Household</h2>
+    <p class="hint">
+      One Letterboxd account per person. Watchlists are combined — a film three
+      of you want is one card with three chips, and “Most wanted” puts it first.
+    </p>
+
+    {% if household %}
+      <ul class="member-list">
+        {% for member in household %}
+          <li class="member{% if not member.active %} member--paused{% endif %}">
+            <form class="member__form" method="post" action="/members/{{ member.id }}">
+              <span class="chip chip--lg" style="--chip: {{ member.chip_color }}" aria-hidden="true">
+                {{ member.initials }}
+              </span>
+
+              <span class="member__who">
+                <input type="text" name="display_name" value="{{ member.display_name }}"
+                       aria-label="Display name for {{ member.letterboxd_username }}" required>
+                {# Not editable: it identifies the entries already stored, so
+                   changing it means a different person - an add and a delete. #}
+                <span class="member__username">letterboxd.com/{{ member.letterboxd_username }}/</span>
+              </span>
+
+              <span class="member__count">
+                {{ member.film_count }} film{{ '' if member.film_count == 1 else 's' }}
+                {%- if member.last_synced_at %} · synced {{ member.last_synced_at|ago }}
+                {%- else %} · never synced{% endif %}
+              </span>
+
+              <label class="member__color">
+                <span class="visually-hidden">Chip colour for {{ member.display_name }}</span>
+                <input type="color" name="color" value="{{ member.chip_color }}">
+              </label>
+
+              {# Unchecked submits nothing, which the route reads as paused. #}
+              <label class="member__active">
+                <input type="checkbox" name="active" value="on" {% if member.active %}checked{% endif %}>
+                Sync
+              </label>
+
+              <button type="submit" class="member__save">Save</button>
+            </form>
+
+            <form method="post" action="/members/{{ member.id }}/delete"
+                  onsubmit="return confirm('Remove {{ member.display_name }}? Films nobody else wants go too.')">
+              <button type="submit" class="member__remove" aria-label="Remove {{ member.display_name }}">Remove</button>
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="hint" id="no-members">
+        Nobody yet. Add a Letterboxd account, then run a sync.
+      </p>
+    {% endif %}
+
+    <form class="member-add" method="post" action="/members">
+      <label>
+        <span class="visually-hidden">Letterboxd username</span>
+        <input type="text" name="username" placeholder="letterboxd username or profile URL" required>
+      </label>
+      <label>
+        <span class="visually-hidden">Display name</span>
+        <input type="text" name="display_name" placeholder="name on the cards (optional)">
+      </label>
+      <button type="submit">Add member</button>
+    </form>
+  </div>
 
   <form class="profile-form" method="post" action="/profile">
 

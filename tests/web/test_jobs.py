@@ -11,11 +11,12 @@ import time
 
 import pytest
 
-from screenseeker.database.models import Film, Job, StreamingOffer
+from screenseeker.database.models import Film, Job, StreamingOffer, WatchlistEntry
 from screenseeker.enrichers.enrichment_models import EnrichmentResult
 from screenseeker.enrichers.enrichment_models import StreamingOffer as Offer
 from screenseeker.enrichers.enrichment_models import TMDBMovieInfo
 from screenseeker.services import jobs
+from screenseeker.services.members import create_member, update_member
 from screenseeker.web.app import create_app
 from tests.web.conftest import make_film
 
@@ -321,3 +322,92 @@ class TestOrphanReaping:
                 assert jobs.claim(session, "refresh").id != stranded.id
             finally:
                 session.close()
+
+
+class TestSyncJob:
+    """
+    The sync job is one job for the whole household, not one per member.
+
+    That is forced by the schema - the partial unique index allows a single
+    active job per kind, so N member jobs would reject each other - and it is
+    also the right granularity to report: the household syncs or it does not.
+    """
+
+    @pytest.fixture
+    def fake_scrapers(self, monkeypatch):
+        """Give each username a canned watchlist, or an exception."""
+        from tests.services.test_household_sync import FakeScraper
+
+        watchlists: dict[str, object] = {}
+
+        def build(username):
+            planned = watchlists.get(username)
+            if isinstance(planned, Exception):
+                raise planned
+            return FakeScraper(planned or [])
+
+        monkeypatch.setattr("screenseeker.web.runner.build_scraper", build)
+        return watchlists
+
+    def test_one_job_covers_every_active_member(self, client, db, fake_scrapers):
+        alice = create_member(db, "alice", display_name="Alice")
+        bob = create_member(db, "bob", display_name="Bob")
+        db.commit()
+
+        fake_scrapers["alice"] = [("Heat", 1995), ("Casino", 1995)]
+        fake_scrapers["bob"] = [("Heat", 1995), ("Solaris", 1972)]
+
+        body = wait_for_job(client, job_id_from(client.post("/jobs/sync", headers=HTMX).text))
+
+        assert "job--succeeded" in body
+        assert "2 watchlist(s)" in body
+        # Heat is one row wanted by two people, not two rows.
+        assert db.query(Film).count() == 3
+        assert db.query(WatchlistEntry).count() == 4
+        assert {m.id for m in (alice, bob)} == {e.member_id for e in db.query(WatchlistEntry).all()}
+
+    def test_a_paused_member_is_not_scraped(self, client, db, fake_scrapers):
+        create_member(db, "alice", display_name="Alice")
+        paused = create_member(db, "bob", display_name="Bob")
+        update_member(db, paused.id, active=False)
+        db.commit()
+
+        fake_scrapers["alice"] = [("Heat", 1995)]
+        fake_scrapers["bob"] = [("Solaris", 1972)]
+
+        wait_for_job(client, job_id_from(client.post("/jobs/sync", headers=HTMX).text))
+
+        assert [f.letterboxd_title for f in db.query(Film).all()] == ["Heat"]
+
+    def test_one_broken_account_does_not_sink_the_others(self, client, db, fake_scrapers):
+        """A private or renamed profile costs that member, not the household."""
+        create_member(db, "alice", display_name="Alice")
+        create_member(db, "bob", display_name="Bob")
+        db.commit()
+
+        fake_scrapers["alice"] = RuntimeError("404 from Letterboxd")
+        fake_scrapers["bob"] = [("Solaris", 1972)]
+
+        body = wait_for_job(client, job_id_from(client.post("/jobs/sync", headers=HTMX).text))
+
+        assert "job--succeeded" in body
+        assert "1 member(s) failed" in body
+        assert "404 from Letterboxd" in body
+        assert db.query(Film).count() == 1
+
+    def test_a_household_where_everything_failed_is_a_failure(self, client, db, fake_scrapers):
+        create_member(db, "alice", display_name="Alice")
+        db.commit()
+
+        fake_scrapers["alice"] = RuntimeError("404 from Letterboxd")
+
+        body = wait_for_job(client, job_id_from(client.post("/jobs/sync", headers=HTMX).text))
+
+        assert "job--failed" in body
+
+    def test_no_members_fails_the_job_with_an_instruction(self, client, db, fake_scrapers):
+        """Nothing to scrape is a setup problem, and should say so."""
+        body = wait_for_job(client, job_id_from(client.post("/jobs/sync", headers=HTMX).text))
+
+        assert "job--failed" in body
+        assert "Profile page" in body

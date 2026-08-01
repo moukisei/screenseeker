@@ -8,6 +8,7 @@ the plan set - POST-only mutations, docs gated on DEBUG - actually hold.
 
 import pytest
 
+from screenseeker.services.members import create_member
 from screenseeker.web.app import create_app
 from tests.web.conftest import make_film
 
@@ -25,7 +26,17 @@ class TestGrid:
         assert "image.tmdb.org" in response.text
         assert "1 offer" in response.text
 
-    def test_empty_library_says_so(self, client):
+    def test_an_empty_library_with_nobody_in_it_says_who_to_add(self, client):
+        """Nothing to sync is the more common first run than nothing synced."""
+        response = client.get("/")
+
+        assert response.status_code == 200
+        assert "Nobody in the household yet" in response.text
+
+    def test_an_empty_library_with_a_member_says_to_sync(self, client, db):
+        create_member(db, "alice", display_name="Alice")
+        db.commit()
+
         response = client.get("/")
 
         assert response.status_code == 200

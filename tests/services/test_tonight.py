@@ -188,5 +188,6 @@ class TestTonight:
             event.remove(engine, "before_cursor_execute", record)
 
         assert len(picks) == 15
-        # Candidate films, their offers, the offer counts. Not one per film.
-        assert len(statements) <= 4, f"got {len(statements)} queries"
+        # Candidate films, their offers, the offer counts, the member chips.
+        # Not one per film.
+        assert len(statements) <= 5, f"got {len(statements)} queries"

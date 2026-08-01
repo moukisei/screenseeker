@@ -187,11 +187,31 @@ sudo journalctl -u caddy -n 30 --no-pager  # look for "certificate obtained succ
 
 Open `https://<yoursubdomain>.duckdns.org` — the login page, over HTTPS.
 
-## 8. First data load and schedule
+## 8. The household
 
-From the web UI, click **Sync watchlist** then **Refresh availability** — on a
+`config init` adds you as the first member. Add everyone else who shares the
+television — each is a Letterboxd account to scrape, not a login, so there is
+still one password for the whole app:
+
+```bash
+sudo -u screenseeker env \
+  SCREENSEEKER_CONFIG_PATH=/var/lib/screenseeker/config.toml \
+  SCREENSEEKER_DB_PATH=/var/lib/screenseeker/screenseeker.db \
+  .venv/bin/screenseeker members add <username> --name "Their name"
+```
+
+Or do it from **Profile → Household** in the browser, which is easier and is
+also where you rename, recolour, pause or remove someone.
+
+## 9. First data load and schedule
+
+From the web UI, click **Sync watchlists** then **Refresh availability** — on a
 fresh database every film is "never checked", so one refresh fetches everything,
 runtimes included. Or from the CLI (pass the same env vars as in step 6).
+
+Sync scrapes each member in turn, so it takes roughly as long as one watchlist
+times the number of people. It is one background job either way; the single
+active job per kind is enforced by the schema.
 
 Install the nightly refresh + backup cron:
 
@@ -206,11 +226,22 @@ sudo cp /opt/screenseeker/deploy/screenseeker.cron /etc/cron.d/screenseeker
 ```bash
 cd /opt/screenseeker
 sudo -u screenseeker git pull
-# If the update added a migration:
-sudo -u screenseeker env SCREENSEEKER_DB_PATH=/var/lib/screenseeker/screenseeker.db \
+
+# If the update added a migration. Pass the config path too, not just the
+# database: a migration may read config.toml to backfill (the household one
+# seeds your first member from it), and without it the fallback is silently
+# worse.
+sudo -u screenseeker env \
+  SCREENSEEKER_DB_PATH=/var/lib/screenseeker/screenseeker.db \
+  SCREENSEEKER_CONFIG_PATH=/var/lib/screenseeker/config.toml \
   .venv/bin/alembic upgrade head
+
 sudo systemctl restart screenseeker
 ```
+
+Back the database up before a migration that adds tables or moves data:
+`sudo -u screenseeker /opt/screenseeker/deploy/backup.sh` (it reads
+`SCREENSEEKER_DB_PATH` from the environment, so pass it the same way).
 
 Template and static changes need the restart (Jinja caches templates in
 production). Static assets are served fresh; hard-reload the browser to drop a
@@ -227,6 +258,13 @@ cached favicon or CSS.
   ephemeral IP. Fix the "current ip" field.
 - **App logs `No config file found at /var/lib/screenseeker/config.toml`** — run
   the `config init` from step 6 with `SCREENSEEKER_CONFIG_PATH` set to that path.
+- **After upgrading, Profile shows a member called "Household"** — the household
+  migration could not read config.toml (it ran without `SCREENSEEKER_CONFIG_PATH`)
+  and fell back to a placeholder that owns your existing films. `household` is
+  not a real Letterboxd account, so syncing it fails. Fix it in this order:
+  **add your real account, sync it, and only then remove `household`**. Removing
+  it first deletes every film nobody else lists — which, at that point, is all
+  of them.
 - **`pip install` fails building a wheel on ARM** — install build deps:
   `sudo apt install -y build-essential libffi-dev`, then retry.
 - **Service won't start** — `journalctl -u screenseeker -n 50 --no-pager`. A

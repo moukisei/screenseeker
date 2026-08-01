@@ -34,6 +34,16 @@
         </p>
       {% endif %}
 
+      {% if film.members %}
+        <p class="detail__wanted">
+          On the watchlist of
+          {% for member in film.members %}
+            <span class="chip chip--inline" style="--chip: {{ member.color }}">{{ member.display_name }}</span>
+            {%- if not loop.last %} {% endif %}
+          {% endfor %}
+        </p>
+      {% endif %}
+
       {% if film.overview %}<p class="detail__overview">{{ film.overview }}</p>{% endif %}
 
       <p class="detail__checked">{{ film.cache_age_days|days }}{% if film.is_stale %} · stale{% endif %}</p>
