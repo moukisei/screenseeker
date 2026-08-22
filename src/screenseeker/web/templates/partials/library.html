@@ -33,10 +33,14 @@
       split into what the household owns and everything else. The script at
       the bottom of this file drives it; it degrades to a plain text filter
       (already server-side, via `provider`) if JS never runs.
+
+      A <label> wrapping the input, exactly like Search/Sort by/Order above
+      and below - not a <div> plus a separate <label for>, which rendered
+      close but not quite identical to every other field in this bar.
     #}
-    <div class="provider-field">
-      <label for="provider-input">Provider</label>
-      <input type="text" id="provider-input" name="provider" placeholder="Any"
+    <label class="provider-field">
+      Provider
+      <input type="text" name="provider" placeholder="Any"
              value="{{ filters.provider or '' }}" autocomplete="off" data-provider-search>
 
       {#
@@ -60,7 +64,7 @@
           {% endfor %}
         {% endif %}
       </ul>
-    </div>
+    </label>
 
     {#
       Country and offer type narrow to the whole scraped catalogue, not just
@@ -95,9 +99,40 @@
       </div>
     </details>
 
+    <label>
+      Sort by
+      <select name="sort">
+        {% for key, label in sort_labels.items() %}
+          <option value="{{ key }}" {% if key == sort %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>
+      Order
+      <select name="direction">
+        <option value="desc" {% if direction == 'desc' %}selected{% endif %}>Descending</option>
+        <option value="asc" {% if direction == 'asc' %}selected{% endif %}>Ascending</option>
+      </select>
+    </label>
+
+    <button type="submit" class="filters__apply">Apply</button>
+    {# A full navigation, so the form itself resets to blank - it is outside
+       #results and so is not otherwise re-rendered. Sort and direction are
+       preferences, not filters, so Clear keeps them rather than resetting
+       to the defaults. #}
+    {% if filters.is_active %}
+      <a class="filters__clear" href="/?sort={{ sort }}&amp;direction={{ direction }}">Clear</a>
+    {% endif %}
+
     {#
       Whose watchlists to draw from. Hidden for a one-person household, where
       it can only ever narrow to what is already shown.
+
+      Own row (see .filters__members in app.css): with several members this
+      is the widest control in the bar, and letting it wrap the primary
+      fields onto a second line - the exact thing it was doing before this
+      was pulled out - is worse than it simply sitting below them.
 
       Checkboxes rather than a multi-select: this is the control the household
       actually reaches for, and a <select multiple> hides its own state behind
@@ -124,32 +159,6 @@
           <option value="all" {% if filters.member_match == 'all' %}selected{% endif %}>all of them</option>
         </select>
       </fieldset>
-    {% endif %}
-
-    <label>
-      Sort by
-      <select name="sort">
-        {% for key, label in sort_labels.items() %}
-          <option value="{{ key }}" {% if key == sort %}selected{% endif %}>{{ label }}</option>
-        {% endfor %}
-      </select>
-    </label>
-
-    <label>
-      Order
-      <select name="direction">
-        <option value="desc" {% if direction == 'desc' %}selected{% endif %}>Descending</option>
-        <option value="asc" {% if direction == 'asc' %}selected{% endif %}>Ascending</option>
-      </select>
-    </label>
-
-    <button type="submit" class="filters__apply">Apply</button>
-    {# A full navigation, so the form itself resets to blank - it is outside
-       #results and so is not otherwise re-rendered. Sort and direction are
-       preferences, not filters, so Clear keeps them rather than resetting
-       to the defaults. #}
-    {% if filters.is_active %}
-      <a class="filters__clear" href="/?sort={{ sort }}&amp;direction={{ direction }}">Clear</a>
     {% endif %}
   </form>
 

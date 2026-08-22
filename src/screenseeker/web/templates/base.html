@@ -31,13 +31,19 @@
       <a href="/"{% if path == '/' %} class="nav--active"{% endif %}>Library</a>
       <a href="/stale"{% if path == '/stale' %} class="nav--active"{% endif %}>Stale</a>
       <a href="/profile"{% if path == '/profile' %} class="nav--active"{% endif %}>Profile</a>
-      {% if auth_enabled() %}
-        {# A POST so it is CSRF-checked like every other mutation. #}
-        <form class="nav__logout" method="post" action="/logout">
-          <button type="submit">Sign out</button>
-        </form>
-      {% endif %}
     </nav>
+    {% if auth_enabled() %}
+      {#
+        A sibling of .nav, not a member of it: margin-left:auto only reaches
+        the far edge of whichever flex box it's actually inside, and .nav
+        sizes to its own content, not the full topbar width. This is what
+        gets it to the true right edge instead of just the end of the links.
+      #}
+      {# A POST so it is CSRF-checked like every other mutation. #}
+      <form class="nav__logout" method="post" action="/logout">
+        <button type="submit">Sign out</button>
+      </form>
+    {% endif %}
   </header>
 
   <main>
