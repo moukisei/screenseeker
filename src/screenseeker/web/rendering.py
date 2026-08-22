@@ -15,6 +15,7 @@ from fastapi import Request
 from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse
 
+from ..services.models import provider_color, readable_on
 from . import auth
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -72,6 +73,8 @@ templates.env.filters["rating"] = _rating
 templates.env.filters["days"] = _days
 templates.env.filters["ago"] = _ago
 templates.env.filters["runtime"] = _runtime
+templates.env.filters["provider_color"] = provider_color
+templates.env.filters["readable_on"] = readable_on
 
 # Read at render time, not import: tests toggle the password via monkeypatch.
 # The template uses it only to decide whether to show a Sign out control.

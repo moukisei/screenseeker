@@ -62,11 +62,13 @@
       {% if mark %}
         {% if mark.url %}
           <a class="badge badge--best" href="{{ mark.url }}" target="_blank"
-             rel="noopener noreferrer" title="Watch now in your base country, no VPN">
+             rel="noopener noreferrer" title="Watch now in your base country, no VPN"
+             style="--fill: {{ mark.provider|provider_color }}; --fill-text: {{ mark.provider|provider_color|readable_on }}">
             ▶ {{ mark.provider }}
           </a>
         {% else %}
-          <span class="badge badge--best" title="On a subscription you hold, no VPN">
+          <span class="badge badge--best" title="On a subscription you hold, no VPN"
+                style="--fill: {{ mark.provider|provider_color }}; --fill-text: {{ mark.provider|provider_color|readable_on }}">
             ▶ {{ mark.provider }}
           </span>
         {% endif %}

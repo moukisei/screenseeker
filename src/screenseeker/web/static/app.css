@@ -1,14 +1,20 @@
-/* One stylesheet, no build step. Dark by default because it is a film grid. */
+/* One stylesheet, no build step. Light theme: cool white chrome, bold hairline
+   borders, one indigo for actions/navigation and one coral for "this is the
+   pick" moments — Tonight's picker and the best-option highlight. Individual
+   provider badges get their own brand fill, set inline per film (see
+   provider_color in rendering.py) rather than through a variable here. */
 
 :root {
-  --bg: #14171c;
-  --panel: #1c2027;
-  --line: #2b313a;
-  --text: #e7eaf0;
-  --muted: #9aa4b2;
-  --accent: #4ade80;
-  --warn: #fbbf24;
-  --radius: 8px;
+  --bg: #f5f6fb;
+  --panel: #ffffff;
+  --line: #dcdcec;
+  --text: #14131f;
+  --muted: #6b6b80;
+  --accent: #4338ca;
+  --coral: #ef4a34;
+  --warn: #b45309;
+  --danger: #c81e1e;
+  --radius: 4px;
 }
 
 * { box-sizing: border-box; }
@@ -27,44 +33,50 @@ code { background: var(--panel); padding: 0 .3em; border-radius: 4px; font-size:
 
 .topbar {
   display: flex;
-  align-items: baseline;
-  gap: 1rem;
+  align-items: center;
+  gap: 1.25rem;
   flex-wrap: wrap;
   padding: 1rem 1.5rem;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1.5px solid var(--text);
 }
-.brand { font-weight: 700; font-size: 1.15rem; text-decoration: none;
+.brand { font-weight: 700; font-size: 1.2rem; letter-spacing: -.01em; text-decoration: none;
   display: inline-flex; align-items: center; gap: .5rem; }
 .brand__logo { display: block; }
 .tagline { margin: 0; color: var(--muted); font-size: .875rem; }
 
-.nav { display: flex; gap: 1.1rem; }
-.nav a { text-decoration: none; color: var(--muted); font-size: .9rem; padding-bottom: 2px; border-bottom: 2px solid transparent; }
-.nav a:hover { color: var(--text); }
-.nav .nav--active { color: var(--text); border-bottom-color: var(--accent); }
-.nav__logout { margin: 0; }
-.nav__logout button { background: none; border: none; color: var(--muted); font: inherit; font-size: .9rem; cursor: pointer; padding: 0; }
+.nav { display: flex; gap: .4rem; }
+.nav a { text-decoration: none; color: var(--muted); font-size: .82rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em; padding: .4rem .8rem; border-radius: 999px; }
+.nav a:hover { color: var(--text); background: var(--line); }
+.nav .nav--active { color: #ffffff; background: var(--coral); }
+.nav__logout { margin: 0 0 0 auto; }
+.nav__logout button { background: none; border: none; color: var(--muted); font: inherit; font-size: .82rem;
+  text-transform: uppercase; letter-spacing: .05em; cursor: pointer; padding: 0; }
 .nav__logout button:hover { color: var(--text); }
 
 /* --- Login -------------------------------------------------------------- */
 
 .login { max-width: 360px; margin: 12vh auto 0; padding: 0 1.5rem; text-align: center; }
-.login .brand { margin: 0; font-size: 1.6rem; }
+.login .brand { margin: 0; font-size: 1.6rem; justify-content: center; }
 .login .tagline { margin: .35rem 0 2rem; }
 .login-form { display: flex; flex-direction: column; gap: 1rem; text-align: left; }
 .login-form label { display: flex; flex-direction: column; gap: .35rem; font-weight: 600; }
-.login-form button { padding: .55rem; font-weight: 600; }
-.login-error { color: #f87171; margin: 0; font-size: .875rem; }
+.login-form button {
+  padding: .6rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; font-size: .85rem;
+  background: var(--coral); color: #ffffff; border: 1.5px solid var(--coral); border-radius: var(--radius);
+}
+.login-form button:hover { background: color-mix(in srgb, var(--coral) 88%, black); }
+.login-error { color: var(--danger); margin: 0; font-size: .875rem; }
 
 .tonight__lede { color: var(--muted); margin: .25rem 0 1.25rem; }
-.badge--best { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); font-weight: 600; }
 
 .flash {
-  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
-  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+  border: 1.5px solid color-mix(in srgb, var(--accent) 45%, transparent);
   color: var(--accent);
   border-radius: var(--radius); padding: .5rem .8rem; margin: 0 0 1.25rem;
 }
+.flash--error { border-color: color-mix(in srgb, var(--danger) 45%, transparent); color: var(--danger); }
 
 /* --- Profile ------------------------------------------------------------ */
 
@@ -73,30 +85,35 @@ code { background: var(--panel); padding: 0 .3em; border-radius: 4px; font-size:
 .profile-form label, .profile-block { display: flex; flex-direction: column; gap: .35rem; font-weight: 600; }
 .profile-form .hint { font-weight: 400; color: var(--muted); font-size: .8rem; }
 .profile-form textarea {
-  background: var(--panel); color: var(--text); border: 1px solid var(--line);
+  background: var(--panel); color: var(--text); border: 1.5px solid var(--line);
   border-radius: var(--radius); padding: .5rem .6rem; font: inherit; resize: vertical;
 }
 .profile-form input[type="number"] { min-width: 6rem; }
-.profile-key { border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem; display: flex; flex-direction: column; gap: .4rem; }
+.profile-key { border: 1.5px solid var(--text); border-radius: var(--radius); padding: 1rem; display: flex; flex-direction: column; gap: .4rem; }
 .profile-key legend { padding: 0 .4rem; color: var(--muted); font-size: .85rem; }
 .profile-key input { max-width: 22rem; }
 
 .profile-subs__head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .75rem; }
-.profile-subs__head h2 { margin: 0; font-size: 1.1rem; }
+.profile-subs__head h2 { margin: 0; font-size: 1.1rem; font-weight: 700; }
 #sub-list { display: flex; flex-direction: column; gap: .75rem; }
 
 .sub-row {
   display: grid;
   grid-template-columns: 1.4fr auto 1fr 1.4fr auto;
   gap: .75rem; align-items: end;
-  border: 1px solid var(--line); border-radius: var(--radius); padding: .75rem .85rem; margin: 0;
+  border: 1.5px solid var(--text); border-radius: var(--radius); padding: .75rem .85rem; margin: 0;
 }
 .sub-row label { display: flex; flex-direction: column; gap: .25rem; font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .sub-row__vpn { flex-direction: row !important; align-items: center; gap: .35rem; text-transform: none; letter-spacing: 0; }
 .sub-row__remove { align-self: end; color: var(--muted); }
-.sub-row__remove:hover { border-color: #5b2b2b; color: #f87171; }
+.sub-row__remove:hover { border-color: color-mix(in srgb, var(--danger) 45%, transparent); color: var(--danger); }
 
-.profile-save { align-self: flex-start; padding: .55rem 1.4rem; font-weight: 600; }
+.profile-save {
+  align-self: flex-start; padding: .55rem 1.4rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .04em; font-size: .85rem; background: var(--accent); color: #ffffff;
+  border: 1.5px solid var(--accent); border-radius: var(--radius);
+}
+.profile-save:hover { background: color-mix(in srgb, var(--accent) 88%, black); }
 @media (max-width: 640px) { .sub-row { grid-template-columns: 1fr; } }
 
 main { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
@@ -107,7 +124,7 @@ main { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
   gap: .75rem;
   flex-wrap: wrap;
   padding: .85rem 1rem;
-  border: 1px solid var(--line);
+  border: 1.5px solid var(--text);
   border-radius: var(--radius);
   background: var(--panel);
 }
@@ -116,22 +133,27 @@ main { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
   flex-direction: column;
   gap: .25rem;
   color: var(--muted);
-  font-size: .75rem;
+  font-size: .72rem;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: .04em;
+  letter-spacing: .05em;
 }
 .filters input, .filters select { min-width: 8rem; }
 .filters__search { flex: 1 1 14rem; }
 .filters__search input { width: 100%; }
-.filters__apply { align-self: flex-end; }
+.filters__apply {
+  align-self: flex-end; background: var(--accent); color: #ffffff; border: 1.5px solid var(--accent);
+  font-weight: 700; text-transform: uppercase; letter-spacing: .04em; font-size: .82rem;
+}
+.filters__apply:hover { background: color-mix(in srgb, var(--accent) 88%, black); border-color: color-mix(in srgb, var(--accent) 88%, black); }
 .filters__clear { align-self: flex-end; padding: .45rem .2rem; color: var(--muted); font-size: .85rem; }
 
-.count { margin: 1rem 0 1.25rem; color: var(--muted); }
+.count { margin: 1rem 0 1.25rem; color: var(--muted); font-weight: 500; }
 input[type="text"], input[type="search"], input[type="password"], input[type="number"],
 select, button {
   background: var(--panel);
   color: var(--text);
-  border: 1px solid var(--line);
+  border: 1.5px solid var(--line);
   border-radius: var(--radius);
   padding: .4rem .6rem;
   font: inherit;
@@ -142,7 +164,7 @@ button:hover { border-color: var(--muted); }
 /* --- Background jobs ---------------------------------------------------- */
 
 .jobs {
-  border: 1px solid var(--line);
+  border: 1.5px solid var(--text);
   border-radius: var(--radius);
   padding: .85rem 1rem;
   margin-bottom: 1.5rem;
@@ -150,17 +172,22 @@ button:hover { border-color: var(--muted); }
 }
 .jobs__actions { display: flex; gap: .6rem; flex-wrap: wrap; }
 .jobs__actions form { margin: 0; }
+.jobs__actions button {
+  background: var(--text); color: #ffffff; border: 1.5px solid var(--text);
+  font-weight: 700; text-transform: uppercase; letter-spacing: .04em; font-size: .8rem;
+}
+.jobs__actions button:hover { background: var(--accent); border-color: var(--accent); }
 
 .job:not(.job--idle) { margin-top: .85rem; }
 .job__head { display: flex; gap: .6rem; align-items: baseline; margin: 0 0 .35rem; }
-.job__label { font-weight: 600; }
+.job__label { font-weight: 700; }
 .job__status { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .job--running .job__status { color: var(--warn); }
 .job--succeeded .job__status { color: var(--accent); }
-.job--failed .job__status { color: #f87171; }
+.job--failed .job__status { color: var(--danger); }
 .job__message, .job__counts, .job__done { margin: .2rem 0; color: var(--muted); font-size: .85rem; }
 .job__refused { margin: 0 0 .5rem; color: var(--warn); font-size: .875rem; }
-.job__percent { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.job__percent { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
 
 /* Themed progress bar. Determinate by default; add --indeterminate for the
    count-unknown phase. */
@@ -169,7 +196,7 @@ button:hover { border-color: var(--muted); }
   width: 100%;
   height: .55rem;
   margin: .45rem 0 .1rem;
-  background: color-mix(in srgb, var(--line) 65%, #000);
+  background: color-mix(in srgb, var(--line) 55%, var(--muted));
   border-radius: 999px;
   overflow: hidden;
 }
@@ -192,7 +219,7 @@ button:hover { border-color: var(--muted); }
   animation: progress-stripes 1s linear infinite;
 }
 .job--succeeded .progress__fill { background: var(--accent); }
-.job--failed .progress__fill { background: #f87171; }
+.job--failed .progress__fill { background: var(--danger); }
 
 .progress--indeterminate .progress__fill {
   width: 35%;
@@ -210,10 +237,10 @@ button:hover { border-color: var(--muted); }
 .job__error {
   margin: .5rem 0 0;
   padding: .55rem .7rem;
-  background: #2a1a1a;
-  border: 1px solid #5b2b2b;
+  background: color-mix(in srgb, var(--danger) 6%, var(--panel));
+  border: 1.5px solid color-mix(in srgb, var(--danger) 35%, transparent);
   border-radius: var(--radius);
-  color: #fca5a5;
+  color: var(--danger);
   font-size: .78rem;
   white-space: pre-wrap;
   max-height: 12rem;
@@ -230,7 +257,7 @@ button:hover { border-color: var(--muted); }
 
 .card {
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 1.5px solid var(--text);
   border-radius: var(--radius);
   overflow: hidden;
   display: flex;
@@ -240,13 +267,13 @@ button:hover { border-color: var(--muted); }
 .card__poster {
   display: block;
   aspect-ratio: 2 / 3;
-  background: #0f1216;
+  background: var(--line);
 }
 .card__poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .card__noposter {
   display: flex; align-items: center; justify-content: center;
   height: 100%; padding: .75rem; text-align: center;
-  color: var(--muted); font-size: .8rem;
+  color: var(--muted); font-size: .8rem; font-weight: 600;
 }
 
 .card__body { padding: .6rem .7rem .7rem; display: flex; flex-direction: column; gap: .35rem; }
@@ -254,7 +281,7 @@ button:hover { border-color: var(--muted); }
    pushing the meta, badges and button down and breaking row alignment; a
    short one still reserves both lines so every card lines up. */
 .card__title {
-  margin: 0; font-size: .95rem; line-height: 1.25;
+  margin: 0; font-size: .95rem; font-weight: 600; line-height: 1.25;
   min-height: 2.5em;
   display: -webkit-box; -webkit-box-orient: vertical;
   -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
@@ -266,14 +293,17 @@ button:hover { border-color: var(--muted); }
 .badge {
   margin: 0;
   align-self: flex-start;
-  font-size: .72rem;
-  padding: .1rem .45rem;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  color: var(--muted);
+  font-size: .68rem;
+  font-weight: 700;
+  padding: .18rem .55rem;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: .02em;
+  color: #ffffff;
+  background: var(--muted);
 }
-.badge--yes { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
-.badge--stale { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.badge--yes { background: var(--accent); }
+.badge--stale { background: var(--warn); }
 
 /* Both pills share one row, so the ▶ mark adds no height. The row never wraps;
    when a long provider (HBO Max) plus a big count won't fit, the mark gives up
@@ -284,17 +314,21 @@ button:hover { border-color: var(--muted); }
 .card__badges .badge--best { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .card__badges .badge:not(.badge--best) { flex: 0 0 auto; }
 
-/* The best-option badge is a link on a card; keep it looking like the badge. */
-a.badge--best { text-decoration: none; }
-a.badge--best:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-.badge--best { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); font-weight: 600; }
+/* The best-option badge is a link on a card, filled with the provider's own
+   colour (set inline as --fill / --fill-text by the provider_color filter) so
+   Netflix, Max and the rest each read as their own small logo chip. */
+.badge--best { background: var(--fill, var(--muted)); color: var(--fill-text, #ffffff); text-decoration: none; }
+.badge--best:hover { filter: brightness(.92); }
 
 
 
 /* --- Tonight's picker ----------------------------------------------------
    A raffle over the cards already in the grid: no second data source, just
    a spin animation and a reveal modal built from the DOM the grid already
-   rendered. Degrades to a plain grid if JS never runs. */
+   rendered. Degrades to a plain grid if JS never runs.
+
+   Tonight is the one screen that runs on coral rather than indigo — it is
+   the "just pick one for me" moment, not a utility action. */
 
 .picker-bar {
   display: flex;
@@ -310,19 +344,22 @@ a.badge--best:hover { border-color: var(--accent); background: color-mix(in srgb
   display: inline-flex;
   align-items: center;
   gap: .45rem;
-  padding: .55rem 1.1rem;
-  font-weight: 600;
+  padding: .6rem 1.2rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  font-size: .85rem;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
-  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
-  color: var(--accent);
+  border: 1.5px solid var(--coral);
+  background: var(--coral);
+  color: #ffffff;
   transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
 }
 .picker-btn:hover {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 24%, var(--panel));
+  background: color-mix(in srgb, var(--coral) 88%, black);
+  border-color: color-mix(in srgb, var(--coral) 88%, black);
   transform: translateY(-1px);
-  box-shadow: 0 6px 18px -8px color-mix(in srgb, var(--accent) 70%, transparent);
+  box-shadow: 0 6px 18px -8px color-mix(in srgb, var(--coral) 70%, transparent);
 }
 .picker-btn:active { transform: translateY(0); }
 .picker-btn:disabled { cursor: default; opacity: .75; }
@@ -335,10 +372,10 @@ a.badge--best:hover { border-color: var(--accent); background: color-mix(in srgb
 
 /* Cycling highlight while the raffle runs over the grid. */
 .card--spin {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--coral);
   outline-offset: 2px;
   transform: scale(1.03);
-  box-shadow: 0 10px 24px -10px color-mix(in srgb, var(--accent) 65%, transparent);
+  box-shadow: 0 10px 24px -10px color-mix(in srgb, var(--coral) 65%, transparent);
   transition: transform .08s ease, box-shadow .08s ease;
   z-index: 1;
   position: relative;
@@ -346,9 +383,9 @@ a.badge--best:hover { border-color: var(--accent); background: color-mix(in srgb
 
 /* The settled pick, marked in the grid even after the modal is closed. */
 .card--picked {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--coral);
   outline-offset: 2px;
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--coral) 18%, transparent);
 }
 .card__pick-ribbon {
   position: absolute;
@@ -359,9 +396,9 @@ a.badge--best:hover { border-color: var(--accent); background: color-mix(in srgb
   font-size: .68rem;
   font-weight: 700;
   letter-spacing: .02em;
-  color: #0b1410;
-  background: var(--accent);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
+  color: #ffffff;
+  background: var(--coral);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .18);
 }
 .card__poster { position: relative; }
 
@@ -394,9 +431,9 @@ a.badge--best:hover { border-color: var(--accent); background: color-mix(in srgb
   padding: 2rem 1.5rem 1.5rem;
   text-align: center;
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 1.5px solid var(--text);
   border-radius: calc(var(--radius) * 2);
-  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, .6);
+  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, .22);
   transform: scale(.94) translateY(8px);
   transition: transform .18s ease;
 }
@@ -412,7 +449,7 @@ a.badge--best:hover { border-color: var(--accent); background: color-mix(in srgb
 }
 .picker-modal__eyebrow {
   margin: 0;
-  color: var(--accent);
+  color: var(--coral);
   font-size: .72rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -424,7 +461,7 @@ a.badge--best:hover { border-color: var(--accent); background: color-mix(in srgb
   aspect-ratio: 2 / 3;
   border-radius: var(--radius);
   overflow: hidden;
-  background: #0f1216;
+  background: var(--line);
   border: 1px solid var(--line);
 }
 .picker-modal__poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -432,7 +469,7 @@ a.badge--best:hover { border-color: var(--accent); background: color-mix(in srgb
   display: flex; align-items: center; justify-content: center;
   height: 100%; padding: 1rem; color: var(--muted); font-size: .85rem;
 }
-.picker-modal__title { margin: .25rem 0 0; font-size: 1.35rem; }
+.picker-modal__title { margin: .25rem 0 0; font-size: 1.35rem; font-weight: 700; }
 .picker-modal__meta { margin: 0; color: var(--muted); font-size: .875rem; }
 
 .picker-modal__actions {
@@ -446,13 +483,16 @@ a.badge--best:hover { border-color: var(--accent); background: color-mix(in srgb
 .picker-modal__watch {
   padding: .55rem;
   border-radius: var(--radius);
-  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--accent);
-  font-weight: 600;
+  border: 1.5px solid var(--coral);
+  background: var(--coral);
+  color: #ffffff;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  font-size: .85rem;
   text-decoration: none;
 }
-.picker-modal__watch:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.picker-modal__watch:hover { background: color-mix(in srgb, var(--coral) 88%, black); }
 .picker-modal__view { color: var(--muted); font-size: .85rem; text-decoration: none; }
 .picker-modal__view:hover { color: var(--text); text-decoration: underline; }
 .picker-modal__again { font-weight: 600; }
@@ -467,8 +507,8 @@ a.badge--best:hover { border-color: var(--accent); background: color-mix(in srgb
   display: flex; align-items: center; justify-content: center; gap: 1.25rem;
   margin: 2rem 0 1rem;
 }
-.pager a { text-decoration: none; padding: .4rem .8rem; border: 1px solid var(--line); border-radius: var(--radius); }
-.pager a:hover { border-color: var(--muted); }
+.pager a { text-decoration: none; padding: .4rem .8rem; border: 1.5px solid var(--line); border-radius: var(--radius); }
+.pager a:hover { border-color: var(--text); }
 .pager .disabled, .pager__position { color: var(--muted); }
 
 .empty { color: var(--muted); padding: 2rem 0; }
@@ -479,30 +519,38 @@ a.badge--best:hover { border-color: var(--accent); background: color-mix(in srgb
 .detail__head { display: flex; gap: 1.75rem; flex-wrap: wrap; }
 .detail__poster img { width: 260px; border-radius: var(--radius); display: block; }
 .detail__facts { flex: 1 1 320px; }
-.detail__facts h1 { margin: 0 0 .35rem; font-size: 1.6rem; }
+.detail__facts h1 { margin: 0 0 .35rem; font-size: 1.6rem; font-weight: 700; letter-spacing: -.01em; }
 .detail__meta, .detail__checked { color: var(--muted); font-size: .875rem; margin: .25rem 0; }
 .detail__overview { max-width: 62ch; }
 .warn { color: var(--warn); }
 
 .strategy { margin-top: 2.5rem; }
-.strategy h2 { font-size: 1.2rem; border-bottom: 1px solid var(--line); padding-bottom: .5rem; }
+.strategy h2 { font-size: 1.2rem; font-weight: 700; border-bottom: 1.5px solid var(--text); padding-bottom: .5rem; }
 .strategy__block { margin: 1.5rem 0; }
-.strategy__block h3 { font-size: .95rem; color: var(--muted); margin: 0 0 .5rem; font-weight: 600; }
-.strategy__block--best h3 { color: var(--accent); }
+.strategy__block h3 { font-size: .95rem; color: var(--muted); margin: 0 0 .5rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .03em; }
+.strategy__block--best h3 { color: var(--coral); }
 .strategy__block summary { color: var(--muted); cursor: pointer; }
 .strategy__scope { color: var(--muted); font-size: .8rem; margin-top: 1rem; }
 
 .options { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
 .option {
   display: flex; align-items: center; gap: .75rem;
-  background: var(--panel); border: 1px solid var(--line);
+  background: var(--panel); border: 1.5px solid var(--text);
   border-radius: var(--radius); padding: .55rem .7rem;
 }
-.strategy__block--best .option { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.strategy__block--best .option { border-color: var(--coral); }
 .option--vpn { border-style: dashed; }
 .option__logo { border-radius: 6px; display: block; }
-.option__logo--blank { width: 46px; height: 46px; background: var(--line); }
-.option__provider { margin: 0; font-weight: 600; }
+/* No provider logo on file: a solid initial-letter chip in the provider's
+   own colour instead of a blank grey square. */
+.option__logo--blank {
+  width: 46px; height: 46px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--fill, var(--line)); color: var(--fill-text, var(--muted));
+  font-weight: 700; font-size: 1.05rem;
+}
+.option__provider { margin: 0; font-weight: 700; }
 .option__bundle, .option__meta { color: var(--muted); font-weight: 400; font-size: .8rem; }
 .option__meta { margin: .1rem 0 0; }
 
@@ -548,7 +596,7 @@ a.badge--best:hover { border-color: var(--accent); background: color-mix(in srgb
 
 .filters__members {
   display: flex; align-items: center; flex-wrap: wrap; gap: .5rem;
-  border: 1px solid var(--line); border-radius: var(--radius);
+  border: 1.5px solid var(--line); border-radius: var(--radius);
   padding: .3rem .6rem .5rem; margin: 0;
 }
 .filters__members legend { padding: 0 .3rem; font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
@@ -570,13 +618,13 @@ a.badge--best:hover { border-color: var(--accent); background: color-mix(in srgb
 /* --- The member editor on /profile ----------------------------------------- */
 
 .profile-members { margin: 1.5rem 0 2.5rem; }
-.profile-members h2 { font-size: 1.1rem; margin: 0 0 .25rem; }
+.profile-members h2 { font-size: 1.1rem; font-weight: 700; margin: 0 0 .25rem; }
 .profile-members .hint { color: var(--muted); font-size: .85rem; margin: 0 0 1rem; max-width: 62ch; }
 
 .member-list { list-style: none; margin: 0 0 1rem; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
 .member {
   display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
-  background: var(--panel); border: 1px solid var(--line);
+  background: var(--panel); border: 1.5px solid var(--text);
   border-radius: var(--radius); padding: .6rem .75rem;
 }
 .member--paused { opacity: .6; }
@@ -587,10 +635,8 @@ a.badge--best:hover { border-color: var(--accent); background: color-mix(in srgb
 .member__count { color: var(--muted); font-size: .78rem; }
 .member__color input { width: 2.25rem; height: 2rem; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: none; }
 .member__active { display: inline-flex; align-items: center; gap: .3rem; font-size: .8rem; color: var(--muted); }
-.member__remove { color: var(--warn); }
+.member__remove { color: var(--danger); }
 
 .member-add { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
 .member-add label { flex: 1 1 12rem; }
 .member-add input { width: 100%; }
-
-.flash--error { border-color: color-mix(in srgb, var(--warn) 55%, transparent); color: var(--warn); }

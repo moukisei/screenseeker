@@ -66,6 +66,83 @@ def member_color(color: Optional[str], username: str) -> str:
     return MEMBER_PALETTE[crc32(username.encode()) % len(MEMBER_PALETTE)]
 
 
+# Brand-ish fills for the providers a household is most likely to hold. Keyed
+# on a normalised name (lowercased, letters/digits only) so "Max", "HBO Max"
+# and "Disney+" / "Disney Plus" all land on the same colour regardless of
+# which spelling TMDB hands back.
+_PROVIDER_COLORS: dict[str, str] = {
+    "netflix": "#E50914",
+    "disneyplus": "#0F3D8C",
+    "hbomax": "#6C2BD9",
+    "max": "#6C2BD9",
+    "amazonprimevideo": "#00A8E1",
+    "primevideo": "#00A8E1",
+    "appletvplus": "#1D1D1F",
+    "appletv": "#1D1D1F",
+    "hulu": "#0F9D66",
+    "paramountplus": "#0064FF",
+    "peacock": "#4B2991",
+    "showtime": "#B1060F",
+    "starz": "#9C7A1F",
+    "crunchyroll": "#F47521",
+    "youtube": "#CC0000",
+    "amcplus": "#E4002B",
+    "mubi": "#262626",
+    "britbox": "#001C46",
+    "discoveryplus": "#0072CE",
+    "espnplus": "#D00000",
+}
+
+# Distinguishable fallback fills for a provider not in the map above -
+# regional or niche services still get a colour of their own rather than
+# one shared grey.
+_PROVIDER_FALLBACK_PALETTE = [
+    "#4338CA",  # indigo
+    "#0D9488",  # teal
+    "#C026D3",  # magenta
+    "#D97706",  # amber
+    "#0284C7",  # sky
+    "#16A34A",  # green
+    "#E11D48",  # rose
+    "#7C3AED",  # violet
+]
+
+
+def _normalise_provider(name: str) -> str:
+    return "".join(ch for ch in name.casefold() if ch.isalnum())
+
+
+def provider_color(name: str) -> str:
+    """
+    A provider's badge fill: its own brand-ish colour when recognised,
+    otherwise a stable colour picked from the name so the same provider is
+    always the same colour across a session and between restarts.
+    """
+    key = _normalise_provider(name)
+    if key in _PROVIDER_COLORS:
+        return _PROVIDER_COLORS[key]
+    return _PROVIDER_FALLBACK_PALETTE[crc32(key.encode()) % len(_PROVIDER_FALLBACK_PALETTE)]
+
+
+def _relative_luminance(hex_color: str) -> float:
+    hex_color = hex_color.lstrip("#")
+    channels = (int(hex_color[i : i + 2], 16) / 255 for i in (0, 2, 4))
+
+    def linearise(value: float) -> float:
+        return value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (linearise(c) for c in channels)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def readable_on(hex_color: str) -> str:
+    """White or near-black text, whichever contrasts better on a fill colour."""
+    luminance = _relative_luminance(hex_color)
+    contrast_white = 1.05 / (luminance + 0.05)
+    contrast_black = (luminance + 0.05) / 0.05
+    return "#ffffff" if contrast_white >= contrast_black else "#14131f"
+
+
 class MemberRef(BaseModel):
     """
     A member as a card chip: who wants this film.
