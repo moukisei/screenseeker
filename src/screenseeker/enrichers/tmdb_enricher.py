@@ -224,6 +224,61 @@ class TMDBEnricher(BaseEnricher):
 
         return result
 
+    def search_candidates(
+        self, title: str, year: Optional[int] = None, limit: int = 6
+    ) -> list[TMDBMovieInfo]:
+        """
+        Up to `limit` TMDB search results for a title, for a person to pick from.
+
+        Unlike `_search_movie`, this returns every candidate rather than
+        picking one - it backs the "the automatic match is wrong" correction
+        flow, where the person looking at the results is the matcher.
+        """
+        params = {"query": title, "language": self.language, "include_adult": "false"}
+        if year:
+            params["year"] = str(year)
+
+        try:
+            data = self._make_request("/search/movie", params)
+        except requests.RequestException as e:
+            self.logger.error(f"TMDB search failed for '{title}': {e}")
+            return []
+
+        return [self._parse_tmdb_movie(result) for result in data.get("results", [])[:limit]]
+
+    def enrich_by_id(self, tmdb_id: int) -> EnrichmentResult:
+        """
+        Enrich a film from a known TMDB id, skipping search entirely.
+
+        For the manual-correction flow: a person already picked the right
+        film, so there is no match to guess at - confidence is "exact" by
+        definition of having been chosen rather than searched for.
+        """
+        details = self._get_movie_details(tmdb_id)
+        if not details:
+            return EnrichmentResult(
+                query_title=str(tmdb_id),
+                query_year=None,
+                match_confidence="none",
+                success=False,
+                error_message=f"TMDB has no movie with id {tmdb_id}.",
+            )
+
+        tmdb_movie = self._parse_tmdb_movie(details)
+        providers_data = details.get("watch/providers", {}).get("results", {})
+        streaming_offers = self._parse_streaming_offers(providers_data)
+
+        return EnrichmentResult(
+            query_title=tmdb_movie.title,
+            query_year=tmdb_movie.year,
+            tmdb_movie=tmdb_movie,
+            match_confidence="exact",
+            streaming_offers=streaming_offers,
+            total_countries=len({offer.country_code for offer in streaming_offers}),
+            total_providers=len({offer.provider_name for offer in streaming_offers}),
+            success=True,
+        )
+
     def _get_movie_details(self, movie_id: int) -> dict:
         """
         Get a movie's full details and its watch providers in one request.

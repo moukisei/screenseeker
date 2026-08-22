@@ -5,7 +5,14 @@
   the watchlist there, and the next sync drops it out of the library on its
   own. A button here would be a second place to record the same fact.
 #}
-<article class="card" id="film-card-{{ film.id }}">
+{#
+  --fill is set once here, on the card itself, whenever there is a best
+  option to show - everything below (the border, the badge, the logo
+  fallback) inherits it rather than each recomputing provider_color, so the
+  whole card reads as that provider's colour, not just the small badge.
+#}
+<article class="card{% if mark %} card--marked{% endif %}" id="film-card-{{ film.id }}"
+         {% if mark %}style="--fill: {{ mark.provider|provider_color }}"{% endif %}>
 
   <a class="card__poster" href="/film/{{ film.id }}">
     {% if film.poster %}
@@ -18,31 +25,34 @@
   <div class="card__body">
     <h2 class="card__title"><a href="/film/{{ film.id }}">{{ film.title }}</a></h2>
 
-    <p class="card__meta">
-      {{ film.year or '—' }}
-      {%- if film.vote_average %} · ★ {{ film.vote_average|rating }}{% endif %}
-      {%- if film.runtime %} · {{ film.runtime|runtime }}{% endif %}
-    </p>
+    <div class="card__meta-row">
+      <p class="card__meta">
+        {{ film.year or '—' }}
+        {%- if film.vote_average %} · ★ {{ film.vote_average|rating }}{% endif %}
+        {%- if film.runtime %} · {{ film.runtime|runtime }}{% endif %}
+      </p>
 
-    {#
-      Who wants this. Hidden entirely in a one-person household, where the
-      same chip on every card says nothing; `household_size` defaults to 1 so
-      any context that forgets to pass it degrades to the old card rather than
-      to a wall of identical initials.
+      {#
+        Who wants this. Hidden entirely in a one-person household, where the
+        same chip on every card says nothing; `household_size` defaults to 1
+        so any context that forgets to pass it degrades to the old card
+        rather than to a wall of identical initials.
 
-      The names sit in the group's aria-label rather than in visible text: the
-      chips carry them for a sighted reader, and this is the sentence version.
-    #}
-    {% if film.members and household_size|default(1) > 1 %}
-      <ul class="chips" aria-label="Wanted by {{ film.members|map(attribute='display_name')|join(', ') }}">
-        {% for member in film.members %}
-          <li class="chip" style="--chip: {{ member.color }}" title="{{ member.display_name }}">
-            <span aria-hidden="true">{{ member.initials }}</span>
-            <span class="visually-hidden">{{ member.display_name }}</span>
-          </li>
-        {% endfor %}
-      </ul>
-    {% endif %}
+        The names sit in the group's aria-label rather than in visible text:
+        the chips carry them for a sighted reader, and this is the sentence
+        version.
+      #}
+      {% if film.members and household_size|default(1) > 1 %}
+        <ul class="chips" aria-label="Wanted by {{ film.members|map(attribute='display_name')|join(', ') }}">
+          {% for member in film.members %}
+            <li class="chip" style="--chip: {{ member.color }}" title="{{ member.display_name }}">
+              <span aria-hidden="true">{{ member.initials }}</span>
+              <span class="visually-hidden">{{ member.display_name }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
 
     {#
       One row for both pills, so a card with a ▶ mark is no taller than one
@@ -58,32 +68,52 @@
       against the profile - that is the Step 6 filter query, not a per-card
       lookup.
     #}
+    {#
+      The provider's own logo is what actually tells two providers apart when
+      their brand colour happens to collide (Canal+ and Apple TV+ are both
+      black) - the initial-letter fallback below only has to cover the films
+      TMDB has no logo image for. Both read --fill off the card itself.
+    #}
+    {% macro mark_logo(mark) %}
+      {% if mark.logo %}
+        <img class="badge__logo" src="{{ mark.logo }}" alt="" width="16" height="16" loading="lazy">
+      {% else %}
+        <span class="badge__logo--blank">{{ mark.provider[:1]|upper }}</span>
+      {% endif %}
+    {% endmacro %}
+
     <div class="card__badges">
       {% if mark %}
         {% if mark.url %}
           <a class="badge badge--best" href="{{ mark.url }}" target="_blank"
-             rel="noopener noreferrer" title="Watch now in your base country, no VPN"
-             style="--fill: {{ mark.provider|provider_color }}; --fill-text: {{ mark.provider|provider_color|readable_on }}">
-            ▶ {{ mark.provider }}
+             rel="noopener noreferrer" title="Watch now in your base country, no VPN">
+            {{ mark_logo(mark) }}{{ mark.provider }}
           </a>
         {% else %}
-          <span class="badge badge--best" title="On a subscription you hold, no VPN"
-                style="--fill: {{ mark.provider|provider_color }}; --fill-text: {{ mark.provider|provider_color|readable_on }}">
-            ▶ {{ mark.provider }}
+          <span class="badge badge--best" title="On a subscription you hold, no VPN">
+            {{ mark_logo(mark) }}{{ mark.provider }}
           </span>
         {% endif %}
       {% endif %}
 
-      {% if film.last_checked is none %}
-        <span class="badge badge--unknown" title="Run screenseeker refresh">Not checked</span>
-      {% elif film.offer_count == 0 %}
-        <span class="badge badge--none" title="{{ film.cache_age_days|days }}">Nowhere to stream</span>
-      {% else %}
-        <span class="badge badge--yes{% if film.is_stale %} badge--stale{% endif %}"
-              title="{{ film.cache_age_days|days }}">
-          {{ film.offer_count }} offer{{ '' if film.offer_count == 1 else 's' }}
-          {%- if film.is_stale %} · stale{% endif %}
-        </span>
+      {#
+        A film with a direct watch link already tells you everything this
+        pill would: it's available, and you own it. Showing the offer count
+        too is redundant, and on a narrow card it is what pushes the ▶
+        badge into an ellipsis.
+      #}
+      {% if not mark %}
+        {% if film.last_checked is none %}
+          <span class="badge badge--unknown" title="Run screenseeker refresh">Not checked</span>
+        {% elif film.offer_count == 0 %}
+          <span class="badge badge--none" title="{{ film.cache_age_days|days }}">Nowhere to stream</span>
+        {% else %}
+          <span class="badge badge--yes{% if film.is_stale %} badge--stale{% endif %}"
+                title="{{ film.cache_age_days|days }}">
+            {{ film.offer_count }} offer{{ '' if film.offer_count == 1 else 's' }}
+            {%- if film.is_stale %} · stale{% endif %}
+          </span>
+        {% endif %}
       {% endif %}
     </div>
   </div>

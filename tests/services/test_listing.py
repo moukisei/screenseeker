@@ -26,6 +26,7 @@ def make_film(
     *,
     year=2000,
     rating=5.0,
+    runtime=None,
     added_days_ago=0,
     tmdb_id=None,
     confidence=None,
@@ -43,6 +44,7 @@ def make_film(
         letterboxd_year=year,
         tmdb_id=tmdb_id,
         vote_average=rating,
+        runtime=runtime,
         match_confidence=confidence,
         date_added=datetime.now(UTC) - timedelta(days=added_days_ago),
     )
@@ -299,6 +301,24 @@ class TestSorting:
 
         assert titles(films) == ["Amélie", "Memento", "Zodiac"]
 
+    def test_title_sort_is_case_insensitive(self, test_session):
+        """
+        SQLite compares TEXT byte-for-byte by default: every uppercase letter
+        sorts before every lowercase one, so a lowercase-leading title like
+        "mother!" would otherwise land after every capitalised title on
+        ascending - and jump to the very front on descending - instead of
+        sorting where it reads alphabetically.
+        """
+        for title in ("Zootopia", "mother!", "Yojimbo"):
+            make_film(test_session, title)
+        test_session.commit()
+
+        asc, _ = library.list_films(test_session, sort="title", direction="asc")
+        desc, _ = library.list_films(test_session, sort="title", direction="desc")
+
+        assert titles(asc) == ["mother!", "Yojimbo", "Zootopia"]
+        assert titles(desc) == ["Zootopia", "Yojimbo", "mother!"]
+
     def test_unknown_years_sort_last_not_first(self, test_session):
         make_film(test_session, "Undated", year=None)
         make_film(test_session, "Recent", year=2020)
@@ -339,6 +359,63 @@ class TestSorting:
         films, _ = library.list_films(test_session, sort="rating")
 
         assert titles(films) == ["Great", "Poor", "Unrated"]
+
+    def test_duration_sorts_longest_first_with_unknown_last(self, test_session):
+        make_film(test_session, "Unknown", runtime=None)
+        make_film(test_session, "Short", runtime=90)
+        make_film(test_session, "Long", runtime=180)
+        test_session.commit()
+
+        films, _ = library.list_films(test_session, sort="duration")
+
+        assert titles(films) == ["Long", "Short", "Unknown"]
+
+    def test_direction_flips_the_order(self, test_session):
+        for title in ("Zodiac", "Amélie", "Memento"):
+            make_film(test_session, title)
+        test_session.commit()
+
+        asc, _ = library.list_films(test_session, sort="title", direction="asc")
+        desc, _ = library.list_films(test_session, sort="title", direction="desc")
+
+        assert titles(asc) == ["Amélie", "Memento", "Zodiac"]
+        assert titles(desc) == ["Zodiac", "Memento", "Amélie"]
+
+    def test_direction_left_unset_uses_the_key_own_default(self, test_session):
+        """ "Title" reads naturally ascending; "added" reads naturally descending."""
+        for title in ("Zodiac", "Amélie", "Memento"):
+            make_film(test_session, title)
+        test_session.commit()
+
+        assert titles(library.list_films(test_session, sort="title")[0]) == [
+            "Amélie",
+            "Memento",
+            "Zodiac",
+        ]
+        assert library.sort_default_direction("title") == "asc"
+        assert library.sort_default_direction("added") == "desc"
+
+    def test_unknown_values_stay_last_regardless_of_direction(self, test_session):
+        """An unrated film is not "the best" just because direction flipped."""
+        make_film(test_session, "Unrated", rating=None)
+        make_film(test_session, "Great", rating=9.0)
+        make_film(test_session, "Poor", rating=2.0)
+        test_session.commit()
+
+        asc, _ = library.list_films(test_session, sort="rating", direction="asc")
+        desc, _ = library.list_films(test_session, sort="rating", direction="desc")
+
+        assert titles(asc) == ["Poor", "Great", "Unrated"]
+        assert titles(desc) == ["Great", "Poor", "Unrated"]
+
+    def test_an_invalid_direction_falls_back_to_the_key_default(self, test_session):
+        make_film(test_session, "Older", added_days_ago=5)
+        make_film(test_session, "Newer", added_days_ago=1)
+        test_session.commit()
+
+        films, _ = library.list_films(test_session, sort="added", direction="sideways")
+
+        assert titles(films) == ["Newer", "Older"]
 
 
 class TestQueryCost:

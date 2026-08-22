@@ -26,34 +26,74 @@
              value="{{ filters.query or '' }}" autocomplete="off">
     </label>
 
-    <label>
-      Provider
-      <input type="text" name="provider" list="provider-names" placeholder="Any"
-             value="{{ filters.provider or '' }}">
-    </label>
-    <datalist id="provider-names">
-      {% for name in facets.providers %}<option value="{{ name }}"></option>{% endfor %}
-    </datalist>
+    {#
+      A native <input list> + <datalist> cannot be styled, height-capped, or
+      grouped by the browser's own rules - hence a small hand-built picker
+      instead: same text field, a positioned <ul> the CSS actually controls,
+      split into what the household owns and everything else. The script at
+      the bottom of this file drives it; it degrades to a plain text filter
+      (already server-side, via `provider`) if JS never runs.
+    #}
+    <div class="provider-field">
+      <label for="provider-input">Provider</label>
+      <input type="text" id="provider-input" name="provider" placeholder="Any"
+             value="{{ filters.provider or '' }}" autocomplete="off" data-provider-search>
 
-    <label>
-      Country
-      <select name="country">
-        <option value="">Any</option>
-        {% for code in facets.countries %}
-          <option value="{{ code }}" {% if code == filters.country %}selected{% endif %}>{{ code }}</option>
-        {% endfor %}
-      </select>
-    </label>
+      {#
+        Group headings only when there is an actual split to show - a lone
+        "Other providers" heading with no "Your subscriptions" to contrast it
+        against (a profile with no subscriptions at all) is a heading
+        answering a question nobody asked.
+      #}
+      {% set grouped = owned_providers and other_providers %}
+      <ul class="provider-suggestions" data-provider-list hidden>
+        {% if owned_providers %}
+          {% if grouped %}<li class="provider-suggestions__group">Your subscriptions</li>{% endif %}
+          {% for name in owned_providers %}
+            <li class="provider-suggestions__item" tabindex="0">{{ name }}</li>
+          {% endfor %}
+        {% endif %}
+        {% if other_providers %}
+          {% if grouped %}<li class="provider-suggestions__group">Other providers</li>{% endif %}
+          {% for name in other_providers %}
+            <li class="provider-suggestions__item" tabindex="0">{{ name }}</li>
+          {% endfor %}
+        {% endif %}
+      </ul>
+    </div>
 
-    <label>
-      Offer
-      <select name="offer_type">
-        <option value="">Any</option>
-        {% for kind in facets.offer_types %}
-          <option value="{{ kind }}" {% if kind == filters.offer_type %}selected{% endif %}>{{ kind }}</option>
-        {% endfor %}
-      </select>
-    </label>
+    {#
+      Country and offer type narrow to the whole scraped catalogue, not just
+      what the household owns - useful (checking a specific VPN country,
+      finding a rental) but not every-visit useful, so they stay out of the
+      way until asked for. Open by default when a bookmarked or shared URL
+      already set one, so a link that filtered by country does not look like
+      it silently stopped filtering.
+    #}
+    <details class="filters__more" {% if filters.country or filters.offer_type %}open{% endif %}>
+      <summary>More filters</summary>
+      <div class="filters__more-fields">
+        <label>
+          Country
+          <select name="country">
+            <option value="">Any</option>
+            {% for code in facets.countries %}
+              <option value="{{ code }}" {% if code == filters.country %}selected{% endif %}>{{ code }}</option>
+            {% endfor %}
+          </select>
+        </label>
+
+        <label>
+          Offer
+          <select name="offer_type">
+            <option value="">Any</option>
+            {% for kind in facets.offer_types %}
+              <option value="{{ kind }}" {% if kind == filters.offer_type %}selected{% endif %}>{{ kind }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+    </details>
 
     {#
       Whose watchlists to draw from. Hidden for a one-person household, where
@@ -95,16 +135,102 @@
       </select>
     </label>
 
+    <label>
+      Order
+      <select name="direction">
+        <option value="desc" {% if direction == 'desc' %}selected{% endif %}>Descending</option>
+        <option value="asc" {% if direction == 'asc' %}selected{% endif %}>Ascending</option>
+      </select>
+    </label>
+
     <button type="submit" class="filters__apply">Apply</button>
     {# A full navigation, so the form itself resets to blank - it is outside
-       #results and so is not otherwise re-rendered. #}
+       #results and so is not otherwise re-rendered. Sort and direction are
+       preferences, not filters, so Clear keeps them rather than resetting
+       to the defaults. #}
     {% if filters.is_active %}
-      <a class="filters__clear" href="/?sort={{ sort }}">Clear</a>
+      <a class="filters__clear" href="/?sort={{ sort }}&amp;direction={{ direction }}">Clear</a>
     {% endif %}
   </form>
 
   <div id="results">
     {% include "partials/results.html" %}
   </div>
+
+  {#
+    The provider picker's behaviour. Lives here, not in results.html: the
+    form (and this list) is never swapped by a filter/sort/search request,
+    so this only ever needs to run once, on the real page load.
+  #}
+  <script>
+  (function () {
+    var input = document.querySelector('[data-provider-search]');
+    var list = document.querySelector('[data-provider-list]');
+    if (!input || !list) return;
+
+    var items = Array.prototype.slice.call(list.querySelectorAll('.provider-suggestions__item'));
+    var groups = Array.prototype.slice.call(list.querySelectorAll('.provider-suggestions__group'));
+
+    function filterList() {
+      var q = input.value.trim().toLowerCase();
+      items.forEach(function (item) {
+        item.hidden = Boolean(q) && item.textContent.toLowerCase().indexOf(q) === -1;
+      });
+      // A group heading hides itself when every item under it, up to the
+      // next heading, is hidden.
+      groups.forEach(function (group) {
+        var node = group.nextElementSibling;
+        var anyVisible = false;
+        while (node && !node.classList.contains('provider-suggestions__group')) {
+          if (!node.hidden) anyVisible = true;
+          node = node.nextElementSibling;
+        }
+        group.hidden = !anyVisible;
+      });
+    }
+
+    function open() {
+      filterList();
+      list.hidden = false;
+    }
+
+    function close() {
+      list.hidden = true;
+    }
+
+    function choose(item) {
+      input.value = item.textContent.trim();
+      close();
+      // A plain value assignment fires no event; the form only reacts to
+      // "change", the same as picking a real <select> option.
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    input.addEventListener('focus', open);
+    input.addEventListener('input', open);
+    input.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') close();
+    });
+
+    list.addEventListener('mousedown', function (event) {
+      // mousedown, not click: fires before the input's blur, so the value
+      // is set while the list is still open rather than after it has
+      // already closed and taken the click target with it.
+      var item = event.target.closest('.provider-suggestions__item');
+      if (!item) return;
+      event.preventDefault();
+      choose(item);
+    });
+    list.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter') return;
+      var item = event.target.closest('.provider-suggestions__item');
+      if (item) choose(item);
+    });
+
+    document.addEventListener('click', function (event) {
+      if (!input.contains(event.target) && !list.contains(event.target)) close();
+    });
+  })();
+  </script>
 
 </div>

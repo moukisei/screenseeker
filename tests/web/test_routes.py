@@ -24,7 +24,11 @@ class TestGrid:
         assert response.status_code == 200
         assert "The Matrix" in response.text
         assert "image.tmdb.org" in response.text
-        assert "1 offer" in response.text
+        # A direct watch link is shown on its own - the redundant offer-count
+        # badge only appears when there is no such link.
+        assert "badge--best" in response.text
+        assert "Netflix" in response.text
+        assert "1 offer" not in response.text
 
     def test_an_empty_library_with_nobody_in_it_says_who_to_add(self, client):
         """Nothing to sync is the more common first run than nothing synced."""
@@ -67,6 +71,28 @@ class TestGrid:
 
     def test_unknown_sort_key_is_rejected(self, client):
         assert client.get("/?sort=; DROP TABLE films").status_code == 422
+
+    def test_direction_can_be_flipped(self, client, db):
+        make_film(db, title="Old", year=1950, tmdb_id=1)
+        make_film(db, title="New", year=2020, tmdb_id=2)
+
+        desc = client.get("/?sort=year&direction=desc").text
+        asc = client.get("/?sort=year&direction=asc").text
+
+        assert desc.index("New") < desc.index("Old")
+        assert asc.index("Old") < asc.index("New")
+
+    def test_unknown_direction_is_rejected(self, client):
+        assert client.get("/?sort=year&direction=sideways").status_code == 422
+
+    def test_the_order_select_reflects_the_resolved_direction(self, client, db):
+        """
+        An unset direction still has to render as *some* selected option -
+        the one `sort` reads naturally in, not an unselected dropdown.
+        """
+        body = client.get("/?sort=title").text
+
+        assert 'value="asc" selected' in body
 
     def test_nonsense_pagination_is_rejected(self, client):
         assert client.get("/?page=0").status_code == 422
@@ -238,6 +264,59 @@ class TestFilters:
 
         assert ">Clear<" not in client.get("/").text
 
+    def test_more_filters_is_collapsed_with_neither_set(self, client, db):
+        self.stock(db)
+
+        body = client.get("/").text
+
+        assert '<details class="filters__more" >' in body
+
+    def test_more_filters_opens_when_country_or_offer_came_from_the_url(self, client, db):
+        """
+        A bookmarked or shared link that filtered by country should not look
+        like it silently stopped filtering just because the control is
+        tucked away by default.
+        """
+        self.stock(db)
+
+        by_country = client.get("/?country=FR").text
+        by_offer = client.get("/?offer_type=flatrate").text
+
+        assert '<details class="filters__more" open>' in by_country
+        assert '<details class="filters__more" open>' in by_offer
+
+    def test_provider_picker_splits_owned_from_other(self, client, db):
+        """
+        The default `profile` fixture holds only Netflix. Disney Plus shows
+        up in the library (someone's watchlist has it), but the household
+        does not pay for it, so it belongs in the "other" group, after and
+        separate from what they actually own.
+        """
+        self.stock(db)
+
+        body = client.get("/").text
+        suggestions = body[body.index("data-provider-list") : body.index("</ul>")]
+
+        assert "Your subscriptions" in suggestions
+        assert "Other providers" in suggestions
+        assert suggestions.index("Your subscriptions") < suggestions.index("Netflix")
+        assert suggestions.index("Netflix") < suggestions.index("Other providers")
+        assert suggestions.index("Other providers") < suggestions.index("Disney Plus")
+
+    def test_provider_picker_has_one_group_when_nothing_is_owned(
+        self, client, db, sessions, profile
+    ):
+        """A profile with no subscriptions has nothing to call "yours"."""
+        make_film(db, title="Mouse", tmdb_id=1, offers=[("FR", "Disney Plus", "flatrate")])
+        profile["subscriptions"] = []
+
+        body = client.get("/").text
+        suggestions = body[body.index("data-provider-list") : body.index("</ul>")]
+
+        assert "Your subscriptions" not in suggestions
+        assert "Other providers" not in suggestions
+        assert "Disney Plus" in suggestions
+
     def test_search_narrows_by_title(self, client, db):
         make_film(db, title="The Matrix", tmdb_id=1)
         make_film(db, title="Casino", tmdb_id=2)
@@ -319,13 +398,74 @@ class TestCardExtras:
 
         body = client.get("/").text
 
-        assert "▶ Netflix" in body
+        assert "badge--best" in body
+        assert "Netflix" in body
         assert f"https://example.test/netflix/{film.id}" in body
 
     def test_a_film_you_cannot_watch_tonight_has_no_badge(self, client, db):
         make_film(db, title="Abroad", tmdb_id=1, offers=[("US", "Netflix", "flatrate")])
 
-        assert "▶" not in client.get("/").text
+        assert "badge--best" not in client.get("/").text
+
+    def test_a_watchable_card_is_tinted_the_providers_own_colour(self, client, db):
+        """
+        --fill is set once on the card article and inherited by the badge and
+        its logo fallback - a card with a direct watch link should carry the
+        card--marked class and the provider's colour as that custom property,
+        not just show it on the small badge.
+        """
+        make_film(db, title="Watchable", tmdb_id=1, offers=[("FR", "Netflix", "flatrate")])
+
+        body = client.get("/").text
+
+        assert "card--marked" in body
+        assert "--fill: #E50914" in body  # Netflix's mapped colour.
+
+    def test_an_unwatchable_card_is_not_tinted(self, client, db):
+        make_film(db, title="Abroad", tmdb_id=1, offers=[("US", "Netflix", "flatrate")])
+
+        assert "card--marked" not in client.get("/").text
+
+    def test_badge_shows_the_provider_logo_when_tmdb_has_one(self, client, db):
+        make_film(db, title="Watchable", tmdb_id=1, offers=[("FR", "Netflix", "flatrate")])
+
+        body = client.get("/").text
+
+        assert '<img class="badge__logo"' in body
+        assert "logo.jpg" in body
+
+    def test_badge_falls_back_to_an_initial_letter_when_tmdb_has_no_logo(self, client, db):
+        """
+        TMDB does not supply a logo for every provider. Two providers whose
+        colour happens to collide (Canal+ and Apple TV+ are both black) are
+        still told apart by the letter inside this fallback chip, not by
+        colour alone.
+        """
+        from datetime import UTC, datetime
+
+        from screenseeker.database.models import StreamingOffer
+
+        film = make_film(db, title="Watchable", tmdb_id=1, offers=())
+        db.add(
+            StreamingOffer(
+                film_id=film.id,
+                country_code="FR",
+                country_name="France",
+                provider_id=8,
+                provider_name="Netflix",
+                monetization_type="flatrate",
+                streaming_url=f"https://example.test/netflix/{film.id}",
+                logo_path=None,
+                checked_at=datetime.now(UTC),
+            )
+        )
+        db.commit()
+
+        body = client.get("/").text
+
+        assert '<img class="badge__logo"' not in body
+        assert "badge__logo--blank" in body
+        assert "--fill:" in body
 
     def test_a_card_shows_the_runtime_when_known(self, client, db):
         make_film(db, title="Long", tmdb_id=1, runtime=125)
@@ -343,7 +483,9 @@ class TestCardExtras:
     def test_a_watchable_card_carries_the_tonight_badge(self, client, db):
         make_film(db, title="Watchable", tmdb_id=1, offers=[("FR", "Netflix", "flatrate")])
 
-        assert "▶ Netflix" in client.get("/").text
+        body = client.get("/").text
+        assert "badge--best" in body
+        assert "Netflix" in body
 
 
 class TestDetailScoping:

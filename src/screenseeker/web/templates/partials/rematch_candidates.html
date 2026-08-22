@@ -1,0 +1,29 @@
+{#
+  Search results for the "wrong TMDB match" correction flow on film.html.
+  Swapped into #rematch-results by the search form; never rendered on its own.
+#}
+{% if error %}
+  <p class="empty">{{ error }}</p>
+{% else %}
+  <ul class="rematch-list">
+    {% for c in candidates %}
+      <li class="rematch-candidate">
+        <span class="rematch-candidate__poster">
+          {% if c.poster %}
+            <img src="{{ c.poster }}" alt="" loading="lazy" width="92" height="138">
+          {% else %}
+            <span class="card__noposter">No poster</span>
+          {% endif %}
+        </span>
+        <div class="rematch-candidate__text">
+          <p class="rematch-candidate__title">{{ c.title }} {% if c.year %}({{ c.year }}){% endif %}</p>
+          {% if c.overview %}<p class="rematch-candidate__overview">{{ c.overview|truncate(160) }}</p>{% endif %}
+          <form method="post" action="/film/{{ film_id }}/rematch">
+            <input type="hidden" name="tmdb_id" value="{{ c.tmdb_id }}">
+            <button type="submit" class="rematch-candidate__use">Use this match</button>
+          </form>
+        </div>
+      </li>
+    {% endfor %}
+  </ul>
+{% endif %}

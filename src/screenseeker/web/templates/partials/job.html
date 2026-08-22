@@ -37,9 +37,20 @@
          aria-valuemax="{{ job.progress_total }}">
       <div class="progress__fill" style="width: {{ job.percent }}%"></div>
     </div>
+    {#
+      A sync's total counts members, not films - the film total is unknown
+      until each person's scrape finishes (see runner.py's _run_sync), so the
+      label has to say what is actually being counted or it reads as a wildly
+      wrong film count for anyone with a small household and a large
+      watchlist.
+    #}
     <p class="job__counts">
       <span class="job__percent">{{ job.percent }}%</span>
-      {{ job.progress_current }} of {{ job.progress_total }} films
+      {% if job.kind == 'sync' %}
+        {{ job.progress_current }} of {{ job.progress_total }} household member{{ '' if job.progress_total == 1 else 's' }}
+      {% else %}
+        {{ job.progress_current }} of {{ job.progress_total }} films
+      {% endif %}
     </p>
   {% elif job.is_active %}
     {# No total yet - the scrape runs before the count is known. An

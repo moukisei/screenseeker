@@ -306,7 +306,13 @@ class LibraryFilter(BaseModel):
 # a key that is not here falls back to the default rather than reaching the
 # query builder. Title and year prefer the Letterboxd value, matching
 # Film.display_title / Film.display_year.
-_SORT_TITLE = func.coalesce(Film.letterboxd_title, Film.tmdb_title)
+#
+# lower() matters: SQLite compares TEXT byte-for-byte by default, so every
+# uppercase letter (A-Z, 65-90) sorts before every lowercase one (a-z,
+# 97-122) - a title like "mother!" would otherwise land after every
+# capitalised title on ascending, and jump to the very front on descending,
+# rather than sorting where a person reading it alphabetically expects.
+_SORT_TITLE = func.lower(func.coalesce(Film.letterboxd_title, Film.tmdb_title))
 _SORT_YEAR = func.coalesce(Film.letterboxd_year, Film.tmdb_year)
 
 # Confidence is an ordered scale stored as text, so alphabetical sorting would
@@ -326,19 +332,60 @@ _WANTED_BY = (
     .scalar_subquery()
 )
 
-# `col.is_(None)` sorts False before True, which puts unknown values last
-# instead of at the top of a descending sort.
-SORTS: dict[str, tuple] = {
-    "added": (Film.date_added.desc(),),
-    "title": (_SORT_TITLE.asc(),),
-    "year": (_SORT_YEAR.is_(None), _SORT_YEAR.desc()),
-    "rating": (Film.vote_average.is_(None), Film.vote_average.desc()),
-    "confidence": (_SORT_CONFIDENCE.asc(),),
+# One directional expression per key, plus what a plain "no direction given"
+# request should do (the sense each key reads naturally in - newest first,
+# A-to-Z, best-rated first). `nulls_last=True` prepends `expr.is_(None)`,
+# which sorts False before True, ahead of the direction clause: an unknown
+# value stays at the bottom whichever way the visible column is sorted,
+# rather than jumping to the top on "ascending".
+#
+# `tiebreak` is fixed regardless of direction - it exists for determinism
+# among equal primary values (most-wanted ties broken by rating), not as a
+# second thing the direction toggle controls.
+_SortMeta = tuple  # (expr, nulls_last: bool, default_direction: str, tiebreak: tuple)
+
+SORTS_META: dict[str, _SortMeta] = {
+    "added": (Film.date_added, False, "desc", ()),
+    "title": (_SORT_TITLE, False, "asc", ()),
+    "year": (_SORT_YEAR, True, "desc", ()),
+    "rating": (Film.vote_average, True, "desc", ()),
+    "confidence": (_SORT_CONFIDENCE, False, "asc", ()),
+    "duration": (Film.runtime, True, "desc", ()),
     # Consensus first, then rating inside a tie: the point of a shared
     # watchlist is that what several people want outranks what one does.
-    "wanted": (_WANTED_BY.desc(), Film.vote_average.is_(None), Film.vote_average.desc()),
+    "wanted": (_WANTED_BY, False, "desc", (Film.vote_average.is_(None), Film.vote_average.desc())),
 }
 DEFAULT_SORT = "added"
+SORT_DIRECTIONS = ("asc", "desc")
+
+
+def sort_default_direction(key: str) -> str:
+    """The direction a sort key reads naturally in, for an unset toggle."""
+    meta = SORTS_META.get(key, SORTS_META[DEFAULT_SORT])
+    return meta[2]
+
+
+def sort_order(key: str, direction: Optional[str] = None) -> tuple:
+    """
+    The ORDER BY clauses for one sort key and direction.
+
+    An unknown key falls back to the default rather than reaching the query
+    builder; an unknown or absent direction falls back to that key's own
+    natural default, not always "desc" - "title" ascending is A-to-Z, and
+    silently forcing it to Z-to-A because of a generic fallback would be its
+    own small bug.
+    """
+    if key not in SORTS_META:
+        key = DEFAULT_SORT
+    expr, nulls_last, default_direction, tiebreak = SORTS_META[key]
+    direction = direction if direction in SORT_DIRECTIONS else default_direction
+
+    clauses = []
+    if nulls_last:
+        clauses.append(expr.is_(None))
+    clauses.append(expr.desc() if direction == "desc" else expr.asc())
+    clauses.extend(tiebreak)
+    return tuple(clauses)
 
 
 def _offer_predicate(filters: LibraryFilter):
@@ -479,6 +526,7 @@ def list_films(
     *,
     filters: Optional[LibraryFilter] = None,
     sort: str = DEFAULT_SORT,
+    direction: Optional[str] = None,
     page: int = 1,
     per_page: int = 48,
 ) -> tuple[list[FilmSummary], int]:
@@ -488,9 +536,12 @@ def list_films(
     Returns (page, total_matching). "on Netflix, available in FR, wanted by
     Alice"
     is one call and one query over films.
+
+    `direction` is optional: omit it (or pass anything not "asc"/"desc") to
+    get `sort`'s own natural direction rather than always defaulting to one.
     """
     filters = filters or LibraryFilter()
-    order = SORTS.get(sort, SORTS[DEFAULT_SORT])
+    order = sort_order(sort, direction)
 
     total = _narrow(session.query(func.count(Film.id)), filters).scalar() or 0
 

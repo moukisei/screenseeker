@@ -27,7 +27,8 @@ class TestTonightRoute:
         body = client.get("/tonight").text
 
         assert "Ready" in body
-        assert "▶ Netflix" in body
+        assert "badge--best" in body
+        assert "Netflix" in body
         assert "Abroad" not in body
         assert "Rental" not in body
         assert "Dropped" not in body

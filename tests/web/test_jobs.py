@@ -411,3 +411,44 @@ class TestSyncJob:
 
         assert "job--failed" in body
         assert "Profile page" in body
+
+
+class TestProgressLabel:
+    """
+    A sync's progress total counts household members, not films - the film
+    total is unknown until each person's scrape finishes (see runner.py's
+    _run_sync). The label has to say so, or "0 of 1" reads as one film in
+    the whole watchlist for anyone with a one-person household.
+    """
+
+    def render(self, **overrides):
+        from screenseeker.services.jobs import JobOut
+        from screenseeker.web.rendering import templates
+
+        fields = {
+            "id": 1,
+            "kind": "sync",
+            "status": "running",
+            "progress_current": 0,
+            "progress_total": 1,
+        }
+        fields.update(overrides)
+        job = JobOut(**fields)
+        return templates.env.get_template("partials/job.html").render(job=job, refused=None)
+
+    def test_sync_counts_household_members(self):
+        body = self.render()
+
+        assert "0 of 1 household member" in body
+        assert "0 of 1 films" not in body
+
+    def test_sync_pluralises_more_than_one_member(self):
+        body = self.render(progress_current=1, progress_total=2)
+
+        assert "1 of 2 household members" in body
+
+    def test_refresh_still_counts_films(self):
+        body = self.render(kind="refresh", progress_current=3, progress_total=10)
+
+        assert "3 of 10 films" in body
+        assert "household member" not in body

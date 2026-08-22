@@ -20,14 +20,16 @@ from pydantic import BeforeValidator
 from sqlalchemy.orm import Session
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 
-from .. import settings
+from .. import settings, user_config
+from ..enrichers.tmdb_enricher import TMDBEnricher
 from ..enrichers.watch_strategy import WatchOption, WatchStrategy
-from ..exceptions import ConfigurationError, JobAlreadyRunning
+from ..exceptions import ConfigurationError, JobAlreadyRunning, TMDBNotFoundError
 from ..services import jobs, library
 from ..services import members as member_service
 from ..services import profile as profile_service
 from ..services import watch
-from ..services.models import FilmDetail, OfferOut
+from ..services.enrichment import build_enricher, rematch_film_by_id, search_tmdb_candidates
+from ..services.models import FilmDetail, OfferOut, poster_url
 from ..services.watch import find_watch_options
 from . import auth
 from .deps import get_db, get_profile, require_user
@@ -40,7 +42,12 @@ MAX_PER_PAGE = 96
 
 # FastAPI rejects anything outside this set with a 422 before it reaches the
 # query builder, so no user input ever selects an ORDER BY.
-SortKey = Literal["added", "wanted", "title", "year", "rating", "confidence"]
+SortKey = Literal["added", "wanted", "title", "year", "rating", "duration", "confidence"]
+
+# Optional, so "not specified" (an unbookmarked / pre-existing URL) can fall
+# back to whatever `sort` reads naturally in, rather than always meaning
+# "desc" - see library.sort_default_direction.
+SortDirection = Literal["asc", "desc"]
 
 # How a member selection combines: the union of those watchlists, or their
 # intersection.
@@ -123,6 +130,43 @@ def _member_ids(values: Optional[list[str]]) -> tuple[int, ...]:
     return tuple(ids)
 
 
+def _owned_providers(profile: dict) -> set[str]:
+    """Every provider name configured on any subscription, case-folded for matching."""
+    return {
+        name.casefold()
+        for sub in profile.get("subscriptions", [])
+        for name in sub.get("provider_names", [])
+    }
+
+
+def _split_providers_by_ownership(
+    all_providers: list[str], profile: dict
+) -> tuple[list[str], list[str]]:
+    """
+    The Provider filter's suggestions, split into what the household owns
+    and everything else - so the picker can show "yours" as its own group
+    instead of one long alphabetical list a two-provider household has to
+    hunt through.
+
+    `all_providers` already comes back alphabetical (facets() sorts it), so
+    each returned list stays alphabetical too. A provider matches "owned" on
+    a case-insensitive substring either way, the same fuzziness the watch
+    strategy itself uses for reseller names (e.g. a config listing "Netflix"
+    still marks a facet value of "Netflix Standard with Ads" as owned).
+    """
+    owned = _owned_providers(profile)
+    if not owned:
+        return [], all_providers
+
+    def is_owned(provider: str) -> bool:
+        folded = provider.casefold()
+        return any(o in folded or folded in o for o in owned)
+
+    owned_providers = [p for p in all_providers if is_owned(p)]
+    other_providers = [p for p in all_providers if not is_owned(p)]
+    return owned_providers, other_providers
+
+
 if set(get_args(JobKind)) != set(jobs.KINDS):
     raise RuntimeError(f"job kinds disagree: routes {get_args(JobKind)}, service {jobs.KINDS}")
 
@@ -132,15 +176,25 @@ SORT_LABELS: dict[str, str] = {
     "title": "Title",
     "year": "Year",
     "rating": "Rating",
+    "duration": "Duration",
     "confidence": "Match confidence",
 }
 
 # Fails at import if the two drift apart, rather than silently sorting by date
 # added because a key the UI offers is not one the service knows.
-if set(SORT_LABELS) != set(library.SORTS):
+if set(SORT_LABELS) != set(library.SORTS_META):
     raise RuntimeError(
         f"sort keys disagree: UI offers {sorted(SORT_LABELS)}, "
-        f"service knows {sorted(library.SORTS)}"
+        f"service knows {sorted(library.SORTS_META)}"
+    )
+
+# A third place a sort key has to be spelled right: SortKey is what FastAPI
+# validates the `sort` query param against, ahead of ever reaching either of
+# the two dicts above - a key missing here 422s instead of misrouting.
+if set(get_args(SortKey)) != set(SORT_LABELS):
+    raise RuntimeError(
+        f"sort keys disagree: SortKey allows {sorted(get_args(SortKey))}, "
+        f"UI offers {sorted(SORT_LABELS)}"
     )
 
 DbSession = Annotated[Session, Depends(get_db)]
@@ -205,6 +259,10 @@ def index(
     page: int = Query(1, ge=1),
     per_page: int = Query(DEFAULT_PER_PAGE, ge=1, le=MAX_PER_PAGE),
     sort: SortKey = "added",
+    # Unset (rather than defaulting to "desc" here) is what lets an
+    # unbookmarked URL fall back to whatever `sort` reads naturally in - see
+    # library.sort_default_direction.
+    direction: Optional[SortDirection] = None,
     # A blank string passes max_length, so these two never needed the coercion.
     query: Optional[str] = Query(None, max_length=100),
     provider: Optional[str] = Query(None, max_length=100),
@@ -235,12 +293,27 @@ def index(
         member_match=member_match or "any",
     )
 
-    films, total = library.list_films(db, filters=filters, sort=sort, page=page, per_page=per_page)
+    films, total = library.list_films(
+        db, filters=filters, sort=sort, direction=direction, page=page, per_page=per_page
+    )
     pages = max(1, ceil(total / per_page))
     household = member_service.list_members(db)
 
+    # The direction actually applied, resolved even when the request left it
+    # unset - so the "Order" select shows the right choice and pager/clear
+    # links carry an explicit value rather than silently losing it.
+    resolved_direction = direction or library.sort_default_direction(sort)
+
     # Everything that identifies this view, for building links that keep it.
-    params = {**filters.as_params(), "sort": sort, "per_page": str(per_page)}
+    params = {
+        **filters.as_params(),
+        "sort": sort,
+        "direction": resolved_direction,
+        "per_page": str(per_page),
+    }
+
+    facets = library.facets(db)
+    owned_providers, other_providers = _split_providers_by_ownership(facets.providers, profile)
 
     context = {
         "films": films,
@@ -249,10 +322,15 @@ def index(
         "pages": pages,
         "per_page": per_page,
         "sort": sort,
+        "direction": resolved_direction,
         "sort_labels": SORT_LABELS,
         "filters": filters,
         "params": params,
-        "facets": library.facets(db),
+        "facets": facets,
+        # The Provider picker's two groups: what the household actually pays
+        # for, and everything else the library has ever seen an offer for.
+        "owned_providers": owned_providers,
+        "other_providers": other_providers,
         # Everyone, not just the active members: a paused member's films are
         # still in the library, so hiding them from the filter would make those
         # rows unreachable.
@@ -278,6 +356,8 @@ def film_detail(
     film_id: int,
     db: DbSession,
     profile: Profile,
+    rematched: Optional[str] = None,
+    rematch_error: Optional[str] = None,
 ) -> HTMLResponse:
     """One film, and how to watch it. Reads cached offers; never calls TMDB."""
     found = find_watch_options(db, film_id, profile=profile)
@@ -288,9 +368,101 @@ def film_detail(
     context = {
         "film": detail,
         "base_country": profile["base_country"],
+        "rematched": bool(rematched),
+        "rematch_error": rematch_error,
         **_strategy_context(detail, strategy),
     }
     return render(request, "film.html", context)
+
+
+def _build_enricher_or_none() -> Optional[TMDBEnricher]:
+    """`build_enricher`, tolerating a missing API key rather than raising."""
+    try:
+        cfg = user_config.load_config()
+    except Exception:
+        cfg = {}
+    try:
+        return build_enricher(cfg)
+    except ConfigurationError:
+        return None
+
+
+@router.get("/film/{film_id}/rematch", response_class=HTMLResponse)
+def rematch_search(
+    request: Request,
+    film_id: int,
+    query: str = Query(..., min_length=1),
+    year: Optional[int] = Query(None),
+) -> HTMLResponse:
+    """
+    Candidate TMDB matches for a manual correction, when the automatic one
+    picked the wrong film.
+
+    A deliberate, narrow exception to "no route calls TMDB" above: this is
+    one fast lookup a person is actively waiting on having just typed a
+    search, not an implicit page-load fetch. Sync and refresh stay
+    background jobs because they are bulk and can run for minutes; this is
+    neither.
+    """
+    enricher = _build_enricher_or_none()
+    if enricher is None:
+        return render(
+            request,
+            "partials/rematch_candidates.html",
+            {"film_id": film_id, "candidates": [], "error": "TMDB is not configured."},
+        )
+
+    with enricher:
+        results = search_tmdb_candidates(enricher, query, year)
+
+    candidates = [
+        {
+            "tmdb_id": r.tmdb_id,
+            "title": r.title,
+            "year": r.year,
+            "poster": poster_url(r.poster_path),
+            "overview": r.overview,
+        }
+        for r in results
+    ]
+    return render(
+        request,
+        "partials/rematch_candidates.html",
+        {
+            "film_id": film_id,
+            "candidates": candidates,
+            "error": None if candidates else "No matches.",
+        },
+    )
+
+
+@router.post("/film/{film_id}/rematch", dependencies=[Depends(require_user)])
+def rematch_apply(
+    film_id: int,
+    db: DbSession,
+    tmdb_id: int = Form(...),
+) -> Response:
+    """Point this film at a different TMDB id and refresh it from there."""
+    enricher = _build_enricher_or_none()
+    if enricher is None:
+        return RedirectResponse(
+            url=f"/film/{film_id}?rematch_error={quote('TMDB is not configured.')}", status_code=303
+        )
+
+    try:
+        with enricher:
+            film = rematch_film_by_id(db, enricher, film_id, tmdb_id)
+    except TMDBNotFoundError as bad:
+        db.rollback()
+        return RedirectResponse(
+            url=f"/film/{film_id}?rematch_error={quote(str(bad))}", status_code=303
+        )
+
+    if film is None:
+        raise HTTPException(status_code=404, detail="That film is not in your library.")
+
+    db.commit()
+    return RedirectResponse(url=f"/film/{film_id}?rematched=1", status_code=303)
 
 
 @router.get("/tonight", response_class=HTMLResponse)

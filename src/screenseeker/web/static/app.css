@@ -1,8 +1,15 @@
 /* One stylesheet, no build step. Light theme: cool white chrome, bold hairline
-   borders, one indigo for actions/navigation and one coral for "this is the
-   pick" moments — Tonight's picker and the best-option highlight. Individual
-   provider badges get their own brand fill, set inline per film (see
-   provider_color in rendering.py) rather than through a variable here. */
+   borders, one pastel indigo for actions/navigation and one pastel coral for
+   "this is the pick" moments — Tonight's picker and the best-option
+   highlight. Individual provider badges get their own brand fill, set inline
+   per film (see provider_color in rendering.py) rather than through a
+   variable here.
+
+   --accent / --coral are pastel fills: dark text sits on top of them, never
+   white - at these lightnesses white text fails contrast. --accent-text /
+   --coral-text are the same hues turned back up, for the few spots where the
+   colour IS the text rather than a background (status words, the best-option
+   heading) and needs to hold its own contrast against the page. */
 
 :root {
   --bg: #f5f6fb;
@@ -10,8 +17,10 @@
   --line: #dcdcec;
   --text: #14131f;
   --muted: #6b6b80;
-  --accent: #4338ca;
-  --coral: #ef4a34;
+  --accent: #8b8fe8;
+  --accent-text: #4338ca;
+  --coral: #f2a08a;
+  --coral-text: #c6471f;
   --warn: #b45309;
   --danger: #c81e1e;
   --radius: 4px;
@@ -48,7 +57,7 @@ code { background: var(--panel); padding: 0 .3em; border-radius: 4px; font-size:
 .nav a { text-decoration: none; color: var(--muted); font-size: .82rem; font-weight: 600;
   text-transform: uppercase; letter-spacing: .05em; padding: .4rem .8rem; border-radius: 999px; }
 .nav a:hover { color: var(--text); background: var(--line); }
-.nav .nav--active { color: #ffffff; background: var(--coral); }
+.nav .nav--active { color: var(--text); background: var(--coral); }
 .nav__logout { margin: 0 0 0 auto; }
 .nav__logout button { background: none; border: none; color: var(--muted); font: inherit; font-size: .82rem;
   text-transform: uppercase; letter-spacing: .05em; cursor: pointer; padding: 0; }
@@ -63,7 +72,7 @@ code { background: var(--panel); padding: 0 .3em; border-radius: 4px; font-size:
 .login-form label { display: flex; flex-direction: column; gap: .35rem; font-weight: 600; }
 .login-form button {
   padding: .6rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; font-size: .85rem;
-  background: var(--coral); color: #ffffff; border: 1.5px solid var(--coral); border-radius: var(--radius);
+  background: var(--coral); color: var(--text); border: 1.5px solid var(--coral); border-radius: var(--radius);
 }
 .login-form button:hover { background: color-mix(in srgb, var(--coral) 88%, black); }
 .login-error { color: var(--danger); margin: 0; font-size: .875rem; }
@@ -71,9 +80,9 @@ code { background: var(--panel); padding: 0 .3em; border-radius: 4px; font-size:
 .tonight__lede { color: var(--muted); margin: .25rem 0 1.25rem; }
 
 .flash {
-  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
-  border: 1.5px solid color-mix(in srgb, var(--accent) 45%, transparent);
-  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+  border: 1.5px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent-text);
   border-radius: var(--radius); padding: .5rem .8rem; margin: 0 0 1.25rem;
 }
 .flash--error { border-color: color-mix(in srgb, var(--danger) 45%, transparent); color: var(--danger); }
@@ -110,7 +119,7 @@ code { background: var(--panel); padding: 0 .3em; border-radius: 4px; font-size:
 
 .profile-save {
   align-self: flex-start; padding: .55rem 1.4rem; font-weight: 700; text-transform: uppercase;
-  letter-spacing: .04em; font-size: .85rem; background: var(--accent); color: #ffffff;
+  letter-spacing: .04em; font-size: .85rem; background: var(--accent); color: var(--text);
   border: 1.5px solid var(--accent); border-radius: var(--radius);
 }
 .profile-save:hover { background: color-mix(in srgb, var(--accent) 88%, black); }
@@ -142,11 +151,61 @@ main { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
 .filters__search { flex: 1 1 14rem; }
 .filters__search input { width: 100%; }
 .filters__apply {
-  align-self: flex-end; background: var(--accent); color: #ffffff; border: 1.5px solid var(--accent);
+  align-self: flex-end; background: var(--accent); color: var(--text); border: 1.5px solid var(--accent);
   font-weight: 700; text-transform: uppercase; letter-spacing: .04em; font-size: .82rem;
 }
 .filters__apply:hover { background: color-mix(in srgb, var(--accent) 88%, black); border-color: color-mix(in srgb, var(--accent) 88%, black); }
 .filters__clear { align-self: flex-end; padding: .45rem .2rem; color: var(--muted); font-size: .85rem; }
+
+/* --- The Provider picker --------------------------------------------------
+   A native <input list>/<datalist> cannot be styled, height-capped, coloured
+   on hover, or split into groups - all four of which this needs - so it is a
+   small hand-built dropdown instead: same text field, a positioned list the
+   CSS actually controls. */
+
+.provider-field { position: relative; display: flex; flex-direction: column; gap: .25rem; }
+.provider-field > label {
+  color: var(--muted); font-size: .72rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em;
+}
+
+.provider-suggestions {
+  position: absolute; top: 100%; left: 0; z-index: 20;
+  width: max-content; min-width: 100%; max-width: 22rem;
+  margin: .3rem 0 0; padding: .35rem 0;
+  max-height: 15rem; overflow-y: auto;
+  list-style: none;
+  background: var(--panel); border: 1.5px solid var(--text); border-radius: var(--radius);
+  box-shadow: 0 16px 32px -16px rgba(0, 0, 0, .3);
+}
+.provider-suggestions[hidden] { display: none; }
+
+.provider-suggestions__group {
+  padding: .4rem .8rem .2rem; color: var(--muted);
+  font-size: .65rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+}
+.provider-suggestions__item {
+  padding: .4rem .8rem; cursor: pointer; font-size: .85rem;
+}
+.provider-suggestions__item:hover,
+.provider-suggestions__item:focus {
+  background: var(--coral); color: var(--text); outline: none;
+}
+
+/* Own row within the wrapping filter bar, whether open or closed, so it
+   never fights the primary fields for space on one line. */
+.filters__more { align-self: flex-end; }
+.filters__more summary {
+  cursor: pointer; list-style: none; color: var(--muted);
+  padding: .45rem 0;
+  font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+}
+.filters__more summary::-webkit-details-marker { display: none; }
+.filters__more summary::before { content: "▸ "; }
+.filters__more[open] summary::before { content: "▾ "; }
+.filters__more summary:hover { color: var(--text); }
+.filters__more[open] summary { margin-bottom: .6rem; }
+.filters__more-fields { display: flex; gap: .75rem; flex-wrap: wrap; }
 
 .count { margin: 1rem 0 1.25rem; color: var(--muted); font-weight: 500; }
 input[type="text"], input[type="search"], input[type="password"], input[type="number"],
@@ -176,14 +235,14 @@ button:hover { border-color: var(--muted); }
   background: var(--text); color: #ffffff; border: 1.5px solid var(--text);
   font-weight: 700; text-transform: uppercase; letter-spacing: .04em; font-size: .8rem;
 }
-.jobs__actions button:hover { background: var(--accent); border-color: var(--accent); }
+.jobs__actions button:hover { background: var(--accent); border-color: var(--accent); color: var(--text); }
 
 .job:not(.job--idle) { margin-top: .85rem; }
 .job__head { display: flex; gap: .6rem; align-items: baseline; margin: 0 0 .35rem; }
 .job__label { font-weight: 700; }
 .job__status { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .job--running .job__status { color: var(--warn); }
-.job--succeeded .job__status { color: var(--accent); }
+.job--succeeded .job__status { color: var(--accent-text); }
 .job--failed .job__status { color: var(--danger); }
 .job__message, .job__counts, .job__done { margin: .2rem 0; color: var(--muted); font-size: .85rem; }
 .job__refused { margin: 0 0 .5rem; color: var(--warn); font-size: .875rem; }
@@ -257,12 +316,27 @@ button:hover { border-color: var(--muted); }
 
 .card {
   background: var(--panel);
-  border: 1.5px solid var(--text);
+  /* Softer than the rest of the chrome on purpose: this border repeats
+     dozens of times a screen, so the same bold var(--text) outline used
+     elsewhere reads as a heavy grid rather than individual posters. A
+     faint indigo tint instead of flat grey - overridden below for a card
+     that has a provider to show, which tints toward that provider instead. */
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));
   border-radius: var(--radius);
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
+
+/* A card with a direct watch link picks up that provider's own colour,
+   inherited from --fill set once on the article (see card.html) - Netflix
+   red, Max purple and so on each read as their own card at a glance across
+   the grid, not just from the small badge. */
+.card--marked {
+  border-color: color-mix(in srgb, var(--fill) 50%, var(--line));
+  background: color-mix(in srgb, var(--fill) 6%, var(--panel));
+}
+.card--marked .badge--best { border-color: color-mix(in srgb, var(--fill) 65%, var(--line)); }
 
 .card__poster {
   display: block;
@@ -288,7 +362,14 @@ button:hover { border-color: var(--muted); }
 }
 .card__title a { text-decoration: none; }
 .card__title a:hover { text-decoration: underline; }
+
+.card__meta-row { display: flex; align-items: center; gap: .4rem; min-width: 0; }
 .card__meta { margin: 0; color: var(--muted); font-size: .8rem; }
+/* Who wants this, inline with the year/rating/runtime rather than its own
+   row - a smaller chip here, the standalone size stays for the filters bar
+   and the detail page. */
+.card__meta-row .chips { margin: 0; flex: 0 0 auto; }
+.card__meta-row .chip { width: 1.05rem; height: 1.05rem; font-size: .55rem; }
 
 .badge {
   margin: 0;
@@ -302,7 +383,7 @@ button:hover { border-color: var(--muted); }
   color: #ffffff;
   background: var(--muted);
 }
-.badge--yes { background: var(--accent); }
+.badge--yes { background: var(--accent); color: var(--text); }
 .badge--stale { background: var(--warn); }
 
 /* Both pills share one row, so the ▶ mark adds no height. The row never wraps;
@@ -314,11 +395,28 @@ button:hover { border-color: var(--muted); }
 .card__badges .badge--best { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .card__badges .badge:not(.badge--best) { flex: 0 0 auto; }
 
-/* The best-option badge is a link on a card, filled with the provider's own
-   colour (set inline as --fill / --fill-text by the provider_color filter) so
-   Netflix, Max and the rest each read as their own small logo chip. */
-.badge--best { background: var(--fill, var(--muted)); color: var(--fill-text, #ffffff); text-decoration: none; }
-.badge--best:hover { filter: brightness(.92); }
+/* Neutral, not provider-coloured: the logo (or the initial-letter fallback
+   right below) is what carries the brand now, so a coloured pill behind it
+   would either clash or double up. */
+.badge--best {
+  display: inline-flex; align-items: center; gap: .3rem;
+  background: var(--panel); color: var(--text); border: 1.5px solid var(--text);
+  text-decoration: none;
+}
+.badge--best:hover { background: var(--line); }
+
+.badge__logo { display: block; width: 16px; height: 16px; border-radius: 3px; background: #ffffff; object-fit: contain; }
+/* Tinted rather than filled, same language as a member's chip: a wall of
+   solid black-or-white squares (several providers share a brand colour)
+   read as identical boxes. */
+.badge__logo--blank {
+  display: flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 50%;
+  font-size: .58rem; font-weight: 700;
+  background: color-mix(in srgb, var(--fill, var(--muted)) 22%, transparent);
+  color: var(--fill, var(--muted));
+  border: 1px solid color-mix(in srgb, var(--fill, var(--muted)) 55%, transparent);
+}
 
 
 
@@ -352,7 +450,7 @@ button:hover { border-color: var(--muted); }
   border-radius: 999px;
   border: 1.5px solid var(--coral);
   background: var(--coral);
-  color: #ffffff;
+  color: var(--text);
   transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
 }
 .picker-btn:hover {
@@ -396,7 +494,7 @@ button:hover { border-color: var(--muted); }
   font-size: .68rem;
   font-weight: 700;
   letter-spacing: .02em;
-  color: #ffffff;
+  color: var(--text);
   background: var(--coral);
   box-shadow: 0 2px 8px rgba(0, 0, 0, .18);
 }
@@ -449,7 +547,7 @@ button:hover { border-color: var(--muted); }
 }
 .picker-modal__eyebrow {
   margin: 0;
-  color: var(--coral);
+  color: var(--coral-text);
   font-size: .72rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -485,7 +583,7 @@ button:hover { border-color: var(--muted); }
   border-radius: var(--radius);
   border: 1.5px solid var(--coral);
   background: var(--coral);
-  color: #ffffff;
+  color: var(--text);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .03em;
@@ -529,7 +627,7 @@ button:hover { border-color: var(--muted); }
 .strategy__block { margin: 1.5rem 0; }
 .strategy__block h3 { font-size: .95rem; color: var(--muted); margin: 0 0 .5rem; font-weight: 700;
   text-transform: uppercase; letter-spacing: .03em; }
-.strategy__block--best h3 { color: var(--coral); }
+.strategy__block--best h3 { color: var(--coral-text); }
 .strategy__block summary { color: var(--muted); cursor: pointer; }
 .strategy__scope { color: var(--muted); font-size: .8rem; margin-top: 1rem; }
 
@@ -542,12 +640,15 @@ button:hover { border-color: var(--muted); }
 .strategy__block--best .option { border-color: var(--coral); }
 .option--vpn { border-style: dashed; }
 .option__logo { border-radius: 6px; display: block; }
-/* No provider logo on file: a solid initial-letter chip in the provider's
-   own colour instead of a blank grey square. */
+/* No provider logo on file: a tinted initial-letter chip in the provider's
+   own colour, same language as a member's chip, instead of a blank grey
+   square or a solid block. */
 .option__logo--blank {
-  width: 46px; height: 46px; border-radius: 6px;
+  width: 46px; height: 46px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  background: var(--fill, var(--line)); color: var(--fill-text, var(--muted));
+  background: color-mix(in srgb, var(--fill, var(--line)) 22%, transparent);
+  color: var(--fill, var(--muted));
+  border: 1px solid color-mix(in srgb, var(--fill, var(--line)) 55%, transparent);
   font-weight: 700; font-size: 1.05rem;
 }
 .option__provider { margin: 0; font-weight: 700; }
@@ -556,6 +657,39 @@ button:hover { border-color: var(--muted); }
 
 .error { text-align: center; padding: 4rem 1rem; }
 .error h1 { font-size: 3rem; margin: 0; color: var(--muted); }
+
+/* --- Fix a wrong TMDB match ------------------------------------------------ */
+
+.rematch { margin-top: 2.5rem; }
+.rematch summary { cursor: pointer; font-weight: 700; color: var(--muted); }
+.rematch summary:hover { color: var(--text); }
+
+.rematch-search { display: flex; align-items: flex-end; gap: .75rem; flex-wrap: wrap; margin: 1rem 0; }
+.rematch-search label {
+  display: flex; flex-direction: column; gap: .25rem; color: var(--muted);
+  font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+}
+.rematch-search input[type="text"] { min-width: 16rem; }
+.rematch-search input[type="number"] { width: 6rem; }
+
+.rematch-list { list-style: none; margin: .5rem 0 0; padding: 0; display: flex; flex-direction: column; gap: .75rem; }
+.rematch-candidate {
+  display: flex; gap: .85rem;
+  background: var(--panel); border: 1.5px solid var(--text);
+  border-radius: var(--radius); padding: .65rem .8rem;
+}
+.rematch-candidate__poster { flex: 0 0 auto; width: 92px; height: 138px; border-radius: 4px; overflow: hidden; background: var(--line); }
+.rematch-candidate__poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.rematch-candidate__poster .card__noposter { font-size: .72rem; }
+.rematch-candidate__text { display: flex; flex-direction: column; gap: .35rem; min-width: 0; }
+.rematch-candidate__title { margin: 0; font-weight: 700; }
+.rematch-candidate__overview { margin: 0; color: var(--muted); font-size: .82rem; }
+.rematch-candidate__use {
+  align-self: flex-start; margin-top: auto; background: var(--accent); color: var(--text);
+  border: 1.5px solid var(--accent); font-weight: 700; font-size: .78rem;
+  text-transform: uppercase; letter-spacing: .03em;
+}
+.rematch-candidate__use:hover { background: color-mix(in srgb, var(--accent) 88%, black); }
 
 /* ---------------------------------------------------------------------------
    The household

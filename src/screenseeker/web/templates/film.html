@@ -8,6 +8,13 @@
 
   <p class="breadcrumb"><a href="/">← Library</a></p>
 
+  {% if rematched %}
+    <p class="flash">Match updated from TMDB.</p>
+  {% endif %}
+  {% if rematch_error %}
+    <p class="flash flash--error">{{ rematch_error }}</p>
+  {% endif %}
+
   <div class="detail__head">
     <div class="detail__poster">
       {% if film.poster %}
@@ -107,6 +114,32 @@
         countries outside your base country and VPN list.
       </p>
     {% endif %}
+  </section>
+
+  {#
+    TMDB's automatic match is occasionally wrong - a common title, a remake,
+    a festival premiere with a different year. This lets a person search TMDB
+    directly and point the film at the right entry, rather than living with
+    the wrong poster and streaming data forever.
+  #}
+  <section class="rematch">
+    <details>
+      <summary>Wrong film? Fix the match</summary>
+
+      <form class="rematch-search" hx-get="/film/{{ film.id }}/rematch" hx-target="#rematch-results" hx-swap="innerHTML">
+        <label>
+          Title
+          <input type="text" name="query" value="{{ film.title }}" required>
+        </label>
+        <label>
+          Year
+          <input type="number" name="year" value="{{ film.year or '' }}" min="1878" max="2100">
+        </label>
+        <button type="submit">Search TMDB</button>
+      </form>
+
+      <div id="rematch-results"></div>
+    </details>
   </section>
 
 </article>

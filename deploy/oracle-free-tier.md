@@ -267,6 +267,23 @@ cached favicon or CSS.
 - **`https://` times out, cert never issues** — port 80 is blocked. Recheck
   *both* firewalls (step 2): the cloud Security List ingress rule, and
   `sudo iptables -L INPUT -n | grep -E 'dpt:(80|443)'` on the box.
+
+- **`git pull` fails with "detected dubious ownership"**, or a follow-up
+  `git config --global` fails with "Permission denied" on `.gitconfig` — some
+  earlier command touched `/opt/screenseeker` as `root` or `ubuntu` instead of
+  `sudo -u screenseeker`, leaving root-owned files in a tree git expects the
+  running user to own. Fix both the damage and the check, once, as root:
+
+  ```bash
+  sudo chown -R screenseeker:screenseeker /opt/screenseeker
+  sudo git config --system --add safe.directory /opt/screenseeker
+  ```
+
+  `--system` writes to `/etc/gitconfig` rather than `screenseeker`'s own
+  `.gitconfig`, so it doesn't depend on that account's home directory being
+  writable and won't need re-doing if ownership drifts again. The actual
+  prevention is discipline, not config: always run git/pip/alembic against
+  this tree as `sudo -u screenseeker`, never plain `sudo` or as `ubuntu`.
 - **`dig` returns the wrong IP** — DuckDNS still points at your laptop or the old
   ephemeral IP. Fix the "current ip" field.
 - **App logs `No config file found at /var/lib/screenseeker/config.toml`** — run

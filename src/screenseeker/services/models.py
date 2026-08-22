@@ -79,6 +79,9 @@ _PROVIDER_COLORS: dict[str, str] = {
     "primevideo": "#00A8E1",
     "appletvplus": "#1D1D1F",
     "appletv": "#1D1D1F",
+    "canal": "#1D1D1F",
+    "canalplus": "#1D1D1F",
+    "mycanal": "#1D1D1F",
     "hulu": "#0F9D66",
     "paramountplus": "#0064FF",
     "peacock": "#4B2991",
@@ -122,25 +125,6 @@ def provider_color(name: str) -> str:
     if key in _PROVIDER_COLORS:
         return _PROVIDER_COLORS[key]
     return _PROVIDER_FALLBACK_PALETTE[crc32(key.encode()) % len(_PROVIDER_FALLBACK_PALETTE)]
-
-
-def _relative_luminance(hex_color: str) -> float:
-    hex_color = hex_color.lstrip("#")
-    channels = (int(hex_color[i : i + 2], 16) / 255 for i in (0, 2, 4))
-
-    def linearise(value: float) -> float:
-        return value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
-
-    r, g, b = (linearise(c) for c in channels)
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b
-
-
-def readable_on(hex_color: str) -> str:
-    """White or near-black text, whichever contrasts better on a fill colour."""
-    luminance = _relative_luminance(hex_color)
-    contrast_white = 1.05 / (luminance + 0.05)
-    contrast_black = (luminance + 0.05) / 0.05
-    return "#ffffff" if contrast_white >= contrast_black else "#14131f"
 
 
 class MemberRef(BaseModel):

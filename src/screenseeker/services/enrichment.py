@@ -21,7 +21,7 @@ from .. import settings
 from ..database.models import Film, StreamingOffer
 from ..enrichers.enrichment_models import EnrichmentResult
 from ..enrichers.tmdb_enricher import TMDBEnricher
-from ..exceptions import ConfigurationError
+from ..exceptions import ConfigurationError, TMDBNotFoundError
 from ..logger import get_logger
 from ..user_config import get_tmdb_api_key
 from .library import IS_WANTED, get_or_create_film, merge_films, offer_counts
@@ -315,6 +315,45 @@ def update_film_from_enrichment(session: Session, film: Film, enrichment: Enrich
 
     logger.info(f"Updated streaming offers for '{film.full_title}'")
     return film
+
+
+def search_tmdb_candidates(enricher: TMDBEnricher, title: str, year: Optional[int] = None):
+    """Thin pass-through so routes call into `services`, never an enricher directly."""
+    return enricher.search_candidates(title, year)
+
+
+def rematch_film(session: Session, enricher: TMDBEnricher, film: Film, tmdb_id: int) -> Film:
+    """
+    Point an existing film at a different TMDB id and refresh it from there.
+
+    For when TMDB's automatic match picked the wrong film: `enrich_by_id`
+    skips search entirely (a person already found the right one), and this
+    reuses `update_film_from_enrichment` so a manually-corrected match is
+    written down through the exact same path as a normal refresh - no second
+    place for a future field to be persisted on one path and not the other.
+    """
+    enrichment = enricher.enrich_by_id(tmdb_id)
+    if not enrichment.success or not enrichment.tmdb_movie:
+        raise TMDBNotFoundError(title=f"TMDB id {tmdb_id}")
+
+    return update_film_from_enrichment(session, film, enrichment)
+
+
+def rematch_film_by_id(
+    session: Session, enricher: TMDBEnricher, film_id: int, tmdb_id: int
+) -> Optional[Film]:
+    """
+    `rematch_film`, looked up by film id.
+
+    The web layer stays ORM-free - this is the one place a film id turns into
+    a `Film` row for the correction flow, so the route only ever holds the
+    result. Returns None when the film does not exist, for the route to turn
+    into a 404.
+    """
+    film = session.get(Film, film_id)
+    if film is None:
+        return None
+    return rematch_film(session, enricher, film, tmdb_id)
 
 
 def enrich_and_save_film(

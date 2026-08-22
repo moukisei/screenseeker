@@ -10,7 +10,7 @@
       <img class="option__logo" src="{{ view.logo }}" alt="" width="46" height="46" loading="lazy">
     {% else %}
       <span class="option__logo option__logo--blank" aria-hidden="true"
-            style="--fill: {{ opt.provider|provider_color }}; --fill-text: {{ opt.provider|provider_color|readable_on }}">
+            style="--fill: {{ opt.provider|provider_color }}">
         {{ opt.provider[:1]|upper }}
       </span>
     {% endif %}
