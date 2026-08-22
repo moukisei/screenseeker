@@ -314,7 +314,10 @@ button:hover { border-color: var(--muted); }
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  /* At main's capped 1400px width, 200px lands on exactly 6 columns rather
+     than 7 - bigger posters, and more room in .card__meta before the
+     runtime is what gets truncated by the ellipsis. */
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 1.25rem;
 }
 
